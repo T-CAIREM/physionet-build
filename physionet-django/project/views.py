@@ -1,9 +1,7 @@
 import os
-import pdb
-import re
 import logging
-from urllib.parse import quote_plus
 
+from dal import autocomplete
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
@@ -15,12 +13,9 @@ from django.contrib.sites.shortcuts import get_current_site
 from django.core.exceptions import (ObjectDoesNotExist, PermissionDenied,
     ValidationError)
 from django.db import transaction
-from django.forms import (formset_factory, inlineformset_factory,
-    modelformset_factory)
-from django.http import HttpResponse, Http404,JsonResponse, HttpResponseRedirect
-from django.http import HttpResponseForbidden
+from django.forms import inlineformset_factory, modelformset_factory
+from django.http import Http404, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
-from django.template import loader
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
@@ -29,8 +24,7 @@ from project.fileviews import display_project_file
 from project import forms
 from project.models import (Affiliation, Author, AuthorInvitation, License,
                             ActiveProject, PublishedProject, StorageRequest, Reference, DataAccess,
-                            ArchivedProject, ProgrammingLanguage, Topic, Contact, Publication,
-                            PublishedAuthor, EditLog, CopyeditLog, DUASignature, CoreProject, GCP,
+                            ArchivedProject, Topic, Publication, PublishedAuthor, DUASignature,
                             AnonymousAccess, DataAccessRequest, DataAccessRequestReviewer)
 from project import utility
 from project.validators import validate_filename
@@ -38,12 +32,10 @@ import notification.utility as notification
 from physionet.forms import set_saved_fields_cookie
 from physionet.middleware.maintenance import ServiceUnavailable
 from physionet.utility import serve_file
-from user.forms import ProfileForm, AssociatedEmailChoiceForm
+from user.forms import AssociatedEmailChoiceForm
 from user.models import User, CloudInformation, CredentialApplication, LegacyCredential
 
-from dal import autocomplete
 
-from ast import literal_eval
 
 LOGGER = logging.getLogger(__name__)
 
@@ -810,28 +802,6 @@ def get_file_forms(project, subdir, display_dirs):
     return (upload_files_form, create_folder_form, rename_item_form,
             move_items_form, delete_items_form)
 
-def get_project_file_info(project, subdir):
-    """
-    Get the files, directories, and breadcrumb info for a project's
-    subdirectory.
-    Helper function for generating the files panel
-    """
-    display_files = display_dirs = ()
-    try:
-        display_files, display_dirs = project.get_directory_content(
-            subdir=subdir)
-        file_error = None
-    except (FileNotFoundError, ValidationError):
-        file_error = 'Directory not found'
-    except OSError:
-        file_error = 'Unable to read directory'
-
-    # Breadcrumbs
-    dir_breadcrumbs = utility.get_dir_breadcrumbs(subdir)
-    parent_dir = os.path.split(subdir)[0]
-
-    return display_files, display_dirs, dir_breadcrumbs, parent_dir, file_error
-
 
 def get_project_file_warning(display_files, display_dirs, subdir):
     """
@@ -883,6 +853,9 @@ def project_files_panel(request, project_slug, **kwargs):
     Return the file panel for the project, along with the forms used to
     manipulate them. Called via ajax to navigate directories.
     """
+    if not request.is_ajax():
+        return redirect('project_files', project_slug=project_slug)
+
     project, is_submitting = (kwargs[k] for k in ('project', 'is_submitting'))
     is_editor = request.user == project.editor
     subdir = request.GET['subdir']
@@ -894,11 +867,8 @@ def project_files_panel(request, project_slug, **kwargs):
     else:
         files_editable = False
 
-    if not request.is_ajax():
-        return redirect('project_files', project_slug=project_slug)
-
     (display_files, display_dirs, dir_breadcrumbs, parent_dir,
-     file_error) = get_project_file_info(project=project, subdir=subdir)
+        file_error) = project.get_file_info(subdir=subdir)
     file_warning = get_project_file_warning(display_files, display_dirs,
                                               subdir)
 
@@ -1021,7 +991,7 @@ def project_files(request, project_slug, subdir='', **kwargs):
     storage_request_form = forms.StorageRequestForm(project=project) if (not storage_request and is_submitting) else None
 
     (display_files, display_dirs, dir_breadcrumbs, parent_dir,
-     file_error) = get_project_file_info(project=project, subdir=subdir)
+        file_error) = project.get_file_info(subdir=subdir)
     file_warning = get_project_file_warning(display_files, display_dirs,
                                               subdir)
 
@@ -1046,13 +1016,11 @@ def project_files(request, project_slug, subdir='', **kwargs):
         'maintenance_message':maintenance_message})
 
 
-@project_auth(auth_mode=3)
-def serve_active_project_file(request, project_slug, file_name, **kwargs):
+def serve_project_file(project, file_path, attach):
     """
-    Serve a file in an active project. file_name is file path relative
-    to the project's file root.
+    Helper function for views that serve an individual project file
     """
-    file_path = os.path.join(kwargs['project'].file_root(), file_name)
+    abs_path = os.path.join(project.file_root(), file_path)
     try:
         attach = ('download' in request.GET)
 
@@ -1061,23 +1029,42 @@ def serve_active_project_file(request, project_slug, file_name, **kwargs):
         # https://bugs.chromium.org/p/chromium/issues/detail?id=271452
         # Until this is fixed, disable CSP sandbox for PDF files when
         # viewed by the authors.
-        if file_path.endswith('.pdf') and kwargs['is_author']:
+        if abs_path.endswith('.pdf') and kwargs['is_author']:
             sandbox = False
         else:
             sandbox = True
 
-        return serve_file(file_path, attach=attach, sandbox=sandbox)
+        return serve_file(abs_path, attach=attach, sandbox=sandbox)
     except IsADirectoryError:
         return redirect(request.path + '/')
+    except (NotADirectoryError, FileNotFoundError):
+        raise Http404()
 
 
 @project_auth(auth_mode=3)
-def display_active_project_file(request, project_slug, file_name, **kwargs):
+def serve_active_project_file(request, project_slug, file_path, **kwargs):
+    """
+    Serve a file in an active project.
+
+    file_path is relative to the project's file root.
+    """
+    project = kwargs['project']
+
+    try:
+        project.validate_project_path(relative_path=file_path)
+    except ValidationError:
+        raise Http404()
+
+    # Hmmmmm.... sandbox?
+
+
+@project_auth(auth_mode=3)
+def display_active_project_file(request, project_slug, file_path, **kwargs):
     """
     Display a file in an active project. file_name is file path relative
     to the project's file root.
     """
-    return display_project_file(request, kwargs['project'], file_name)
+    return display_project_file(request, kwargs['project'], file_path)
 
 
 @project_auth(auth_mode=3)
@@ -1093,7 +1080,7 @@ def preview_files_panel(request, project_slug, **kwargs):
         return redirect('project_preview', project_slug=project_slug)
 
     (display_files, display_dirs, dir_breadcrumbs, parent_dir,
-     file_error) = get_project_file_info(project=project, subdir=subdir)
+        file_error) = project.get_file_info(subdir=subdir)
     files_panel_url = reverse('preview_files_panel', args=(project.slug,))
     file_warning = get_project_file_warning(display_files, display_dirs,
                                               subdir)
@@ -1135,7 +1122,7 @@ def project_preview(request, project_slug, subdir='', **kwargs):
             messages.error(request, e)
 
     (display_files, display_dirs, dir_breadcrumbs, parent_dir,
-     file_error) = get_project_file_info(project=project, subdir=subdir)
+        file_error) = project.get_file_info(subdir=subdir)
     files_panel_url = reverse('preview_files_panel', args=(project.slug,))
     file_warning = get_project_file_warning(display_files, display_dirs,
                                               subdir)
@@ -1150,7 +1137,7 @@ def project_preview(request, project_slug, subdir='', **kwargs):
         'publication':publication, 'topics':topics, 'languages':languages,
         'passes_checks':passes_checks, 'dir_breadcrumbs':dir_breadcrumbs,
         'files_panel_url':files_panel_url, 'citations': citations,
-        'subdir':subdir, 'parent_dir':parent_dir, 'file_error':file_error, 
+        'subdir':subdir, 'parent_dir':parent_dir, 'file_error':file_error,
         'file_warning':file_warning, 'platform_citations': platform_citations,
         'parent_projects':parent_projects, 'has_passphrase':has_passphrase})
 
@@ -1372,7 +1359,7 @@ def published_files_panel(request, project_slug, version):
 
     if project.has_access(user) or has_passphrase:
         (display_files, display_dirs, dir_breadcrumbs, parent_dir,
-         file_error) = get_project_file_info(project=project, subdir=subdir)
+            file_error) = project.get_file_info(subdir=subdir)
 
         files_panel_url = reverse('published_files_panel',
             args=(project.slug, project.version))
@@ -1385,10 +1372,9 @@ def published_files_panel(request, project_slug, version):
     else:
         raise Http404()
 
-def serve_active_project_file_editor(request, project_slug, full_file_name):
+def serve_active_project_file_editor(request, project_slug, file_path):
     """
-    Serve a file or subdirectory of a published project.
-    Works for open and protected. Not needed for open.
+    Serve a file or subdirectory of an active project. Used for editors.
 
     """
     utility.check_http_auth(request)
@@ -1397,14 +1383,19 @@ def serve_active_project_file_editor(request, project_slug, full_file_name):
     except ObjectDoesNotExist:
         raise Http404()
 
+    try:
+        project.validate_project_path(relative_path=file_path)
+    except ValidationError:
+        raise Http404()
+
     user = request.user
 
     if user.is_authenticated and (project.authors.filter(user=user) or
         user == project.editor or user.is_admin):
-        file_path = os.path.join(project.file_root(), full_file_name)
+        abs_path = os.path.join(project.file_root(), file_path)
         try:
             attach = ('download' in request.GET)
-            return serve_file(file_path, attach=attach, allow_directory=True)
+            return serve_file(abs_path, attach=attach, allow_directory=True)
         except IsADirectoryError:
             return redirect(request.path + '/')
         except (NotADirectoryError, FileNotFoundError):
@@ -1413,10 +1404,12 @@ def serve_active_project_file_editor(request, project_slug, full_file_name):
     return utility.require_http_auth(request)
 
 def serve_published_project_file(request, project_slug, version,
-        full_file_name):
+        file_path):
     """
     Serve a file or subdirectory of a published project.
     Works for open and protected. Not needed for open.
+
+    file_path is relative to the project's file root.
 
     """
     utility.check_http_auth(request)
@@ -1426,6 +1419,11 @@ def serve_published_project_file(request, project_slug, version,
     except ObjectDoesNotExist:
         raise Http404()
 
+    try:
+        project.validate_project_path(relative_path=file_path)
+    except ValidationError:
+        raise Http404()
+
     user = request.user
 
     # Anonymous access authentication
@@ -1433,7 +1431,7 @@ def serve_published_project_file(request, project_slug, version,
     has_passphrase = project.get_anonymous_url() == an_url
 
     if project.has_access(user) or has_passphrase:
-        file_path = os.path.join(project.file_root(), full_file_name)
+        abs_path = os.path.join(project.file_root(), file_path)
         try:
             attach = ('download' in request.GET)
 
@@ -1442,12 +1440,12 @@ def serve_published_project_file(request, project_slug, version,
             # https://bugs.chromium.org/p/chromium/issues/detail?id=271452
             # Until this is fixed, disable CSP sandbox for published
             # PDF files.
-            if file_path.endswith('.pdf'):
+            if abs_path.endswith('.pdf'):
                 sandbox = False
             else:
                 sandbox = True
 
-            return serve_file(file_path, attach=attach, allow_directory=True,
+            return serve_file(abs_path, attach=attach, allow_directory=True,
                               sandbox=sandbox)
         except IsADirectoryError:
             return redirect(request.path + '/')
@@ -1457,11 +1455,11 @@ def serve_published_project_file(request, project_slug, version,
     return utility.require_http_auth(request)
 
 
-def display_published_project_file(request, project_slug, version,
-                                   full_file_name):
+def display_published_project_file(request, project_slug, version, file_path):
     """
-    Display a file in a published project. full_file_name is the file
-    path relative to the project's file root.
+    Display a file in a published project.
+
+    file_path is relative to the project's file root.
     """
     try:
         project = PublishedProject.objects.get(slug=project_slug,
@@ -1476,11 +1474,11 @@ def display_published_project_file(request, project_slug, version,
     has_passphrase = project.get_anonymous_url() == an_url
 
     if project.has_access(user) or has_passphrase:
-        return display_project_file(request, project, full_file_name)
+        return display_project_file(request, project, file_path)
 
     # Display error message: "you must [be a credentialed user and]
     # sign the data use agreement"
-    breadcrumbs = utility.get_dir_breadcrumbs(full_file_name, directory=False)
+    breadcrumbs = utility.get_dir_breadcrumbs(file_path, directory=False)
     context = {
         'project': project,
         'breadcrumbs': breadcrumbs,
@@ -1586,15 +1584,15 @@ def published_project(request, project_slug, version, subdir=''):
                'references': references, 'publication': publication,
                'topics': topics, 'languages': languages, 'contact': contact,
                'has_access': has_access, 'current_site': current_site,
-               'url_prefix': url_prefix, 'citations': citations, 'news': news, 
+               'url_prefix': url_prefix, 'citations': citations, 'news': news,
                'all_project_versions': all_project_versions,
                'parent_projects':parent_projects, 'data_access':data_access,
-               'messages':messages.get_messages(request), 
+               'messages':messages.get_messages(request),
                'platform_citations': platform_citations}
     # The file and directory contents
     if has_access:
         (display_files, display_dirs, dir_breadcrumbs, parent_dir,
-         file_error) = get_project_file_info(project=project, subdir=subdir)
+            file_error) = project.get_file_info(subdir=subdir)
         if file_error:
             status = 404
         else:

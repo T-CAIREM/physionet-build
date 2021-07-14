@@ -4,19 +4,17 @@ import errno
 import html.parser
 import os
 import shutil
-import pdb
 import urllib.parse
-import uuid
 import logging
 import re
 import requests
 import json
 
-from django.contrib import auth, messages
+from django.contrib import auth
 from django.contrib.sites.shortcuts import get_current_site
 from django.conf import settings
-from django.core.exceptions import (PermissionDenied, ValidationError)
-from django.http import HttpResponse, Http404
+from django.core.exceptions import PermissionDenied
+from django.http import HttpResponse
 from django.utils.crypto import constant_time_compare
 from googleapiclient.errors import HttpError
 
@@ -45,11 +43,10 @@ class DirectoryBreadcrumb():
     """
     For navigating through project file directories
     """
-    def __init__(self, name, rel_path, full_subdir, active=True):
+    def __init__(self, name, rel_path, full_subdir):
         self.name = name
         self.rel_path = rel_path
         self.full_subdir = full_subdir
-        self.active = active
 
 
 def get_dir_breadcrumbs(path, directory=True):
@@ -66,7 +63,7 @@ def get_dir_breadcrumbs(path, directory=True):
 
     if path == '':
         return [DirectoryBreadcrumb(name='<base>', rel_path='',
-                                    full_subdir='', active=False)]
+                                    full_subdir='')]
     if path.endswith('/'):
         path = path[:-1]
     dirs = path.split('/')
@@ -80,7 +77,7 @@ def get_dir_breadcrumbs(path, directory=True):
         dir_breadcrumbs.append(DirectoryBreadcrumb(
             name=dirs[i], rel_path=rel_path,
             full_subdir='/'.join([d.name for d in dir_breadcrumbs[1:]]+ [dirs[i]])))
-    dir_breadcrumbs[-1].active = False
+
     return dir_breadcrumbs
 
 
