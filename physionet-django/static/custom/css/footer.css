@@ -4,17 +4,25 @@
  * Footer
  */
 
-.blog-footer {
+.footer-top {
 	padding: 2rem;
-	color: #999;
+	color: #fff;
 	text-align: center;
-	background-color: #f9f9f9;
+	background-color: #1E3765;
 	border-top: .05rem solid #e5e5e5;
 	min-height: 20%;
 }
 
-.blog-footer p:last-child {
+.footer-top p:last-child {
 	margin-bottom: 0;
+}
+
+.footer-bottom {
+	padding: 1rem;
+	color: #fff;
+	text-align: center;
+	background-color: #0a1527;
+	min-height: 10%;
 }
 
 .row-centered {
@@ -26,4 +34,10 @@
     float:none;
     /* inline-block space fix */
     margin-right:-4px;
+}
+
+.footer-logo {
+	width:19%;
+  	height:auto;
+	padding-bottom:2%;
 }

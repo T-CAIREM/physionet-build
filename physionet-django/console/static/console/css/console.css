@@ -59,7 +59,7 @@ body.fixed-nav {
 }
 
 .scroll-to-top:hover {
-  background: #343a40;
+  background: #0D534D;
 }
 
 .scroll-to-top i {
@@ -256,11 +256,11 @@ body.fixed-nav {
 }
 
 #mainNav.fixed-top.navbar-dark .sidenav-toggler {
-  background-color: #212529;
+  background-color: #0a1527;
 }
 
 #mainNav.fixed-top.navbar-dark .sidenav-toggler a i {
-  color: #adb5bd;
+  color: #fff;
 }
 
 #mainNav.fixed-top.navbar-light .sidenav-toggler {
@@ -377,13 +377,14 @@ body.sidenav-toggled .navbar-sidenav-tooltip.show {
 
 #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-second-level > li > a,
 #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-third-level > li > a {
-  color: #868e96;
+  color: #fff;
 }
 
 #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-second-level > li > a:focus, #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-second-level > li > a:hover,
 #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-third-level > li > a:focus,
 #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-third-level > li > a:hover {
-  color: #adb5bd;
+  color: #0a1527;
+  font-size: 15px;
 }
 
 /*#mainNav.navbar-dark .navbar-collapse .navbar-nav > .nav-item.dropdown > .nav-link:after {
@@ -392,18 +393,20 @@ body.sidenav-toggled .navbar-sidenav-tooltip.show {
 
 @media (min-width: 1100px) {
   #mainNav.navbar-dark .navbar-collapse .navbar-sidenav {
-    background: #343a40;
+    background: #0D534D;
   }
   #mainNav.navbar-dark .navbar-collapse .navbar-sidenav li.active a {
     color: white !important;
-    background-color: #495057;
+    background-color: #00A189;
   }
-  #mainNav.navbar-dark .navbar-collapse .navbar-sidenav li.active a:focus, #mainNav.navbar-dark .navbar-collapse .navbar-sidenav li.active a:hover {
-    color: white;
+  #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > li > a:focus,
+  #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > li > a:hover {
+    color: #00A189;
+    font-size: 15px;
   }
   #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-second-level,
   #mainNav.navbar-dark .navbar-collapse .navbar-sidenav > .nav-item .sidenav-third-level {
-    background: #343a40;
+    background-color: #007FA3;
   }
 }
 
