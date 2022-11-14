@@ -24,10 +24,10 @@ html{
 	overflow: hidden;
 	background: 
 	    linear-gradient(
-	      rgba(42, 47, 52, 0.60),
-	      rgba(42, 47, 52, 0.85) 35%,
-	      rgba(42, 47, 52, 0.85) 75%,
-	      rgba(42, 47, 52, 0.60) 100%
+	      rgba(30, 55, 101, 0.60),
+	      rgba(30, 55, 101, 0.85) 35%,
+	      rgba(30, 55, 101, 0.85) 75%,
+	      rgba(30, 55, 101, 0.60) 100%
 	    ),
 	    url("../../images/background.jpg");
 	background-size: cover;
@@ -67,7 +67,7 @@ html{
 	margin: 10px;
 	font-size: calc(16px + 0.5vw);
 	color: white;
-	background-color: #343a40;
+	background-color: #337ab7;
 	border: 1px white solid;
 	transition: all 0.5s;
 }
