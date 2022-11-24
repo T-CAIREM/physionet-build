@@ -56,18 +56,6 @@ urlpatterns = [
         name='database_overview'),
     path('about/software/', views.software_overview,
         name='software_overview'),
-    path('about/challenge/', views.challenge_overview,
-        name='challenge_overview'),
-    path('about/tutorial/', views.tutorial_overview,
-        name='tutorial_overview'),
-
-    # detailed pages related to the challenges overview
-    path('about/challenge/moody-challenge-overview', views.moody_challenge_overview,
-         name='moody_challenge_overview'),
-    path('about/challenge/moody-challenge', views.moody_challenge,
-         name='moody_challenge'),
-    path('about/challenge/community-challenge', views.community_challenge,
-         name='community_challenge'),
 
     # path for about static pages
     path('about/', views.static_view, name='static_view'),
