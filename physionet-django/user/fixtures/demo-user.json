@@ -12,7 +12,10 @@
     "is_admin": true,
     "is_superuser": true,
     "is_credentialed": false,
-    "credential_datetime": null
+    "credential_datetime": null,
+    "groups": [
+      1
+    ]
   }
 },
 {
@@ -3087,7 +3090,10 @@
     "is_active": true,
     "is_admin": true,
     "is_credentialed": true,
-    "credential_datetime": "2010-02-28T05:00:00Z"
+    "credential_datetime": "2010-02-28T05:00:00Z",
+    "groups": [
+      1
+    ]
   }
 },
 {
@@ -14131,6 +14137,11 @@
         "staticpage"
       ],
       [
+        "change_frontpagebutton",
+        "physionet",
+        "frontpagebutton"
+      ],
+      [
         "can_assign_editor",
         "project",
         "activeproject"
@@ -14199,6 +14210,11 @@
         "view_user",
         "user",
         "user"
+      ],
+      [
+        "can_view_admin_console",
+        "user",
+        "user"
       ]
     ]
   }
@@ -14242,6 +14258,11 @@
         "change_storagerequest",
         "project",
         "storagerequest"
+      ],
+      [
+        "can_view_admin_console",
+        "user",
+        "user"
       ]
     ]
   }
@@ -14260,6 +14281,11 @@
         "can_view_access_logs",
         "project",
         "publishedproject"
+      ],
+      [
+        "can_view_admin_console",
+        "user",
+        "user"
       ]
     ]
   }
@@ -14273,6 +14299,11 @@
         "change_activeproject",
         "project",
         "activeproject"
+      ],
+      [
+        "can_view_admin_console",
+        "user",
+        "user"
       ]
     ]
   }
@@ -14293,9 +14324,19 @@
         "staticpage"
       ],
       [
+        "change_frontpagebutton",
+        "physionet",
+        "frontpagebutton"
+      ],
+      [
         "can_edit_featured_content",
         "project",
         "publishedproject"
+      ],
+      [
+        "can_view_admin_console",
+        "user",
+        "user"
       ]
     ]
   }
@@ -14312,6 +14353,11 @@
       ],
       [
         "view_user",
+        "user",
+        "user"
+      ],
+      [
+        "can_view_admin_console",
         "user",
         "user"
       ]

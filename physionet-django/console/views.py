@@ -32,7 +32,7 @@ from notification.models import News
 from physionet.forms import set_saved_fields_cookie
 from physionet.middleware.maintenance import ServiceUnavailable
 from physionet.utility import paginate
-from physionet.models import Section, StaticPage
+from physionet.models import FrontPageButton, Section, StaticPage
 from project import forms as project_forms
 from project.models import (
     GCP,
@@ -103,8 +103,8 @@ def make_checksum_background(pid):
     project.set_storage_info()
 
 
-def is_admin(user, *args, **kwargs):
-    return user.is_admin
+def has_change_credentialapplication_permission(user, *args, **kwargs):
+    return user.has_perm('user.change_credentialapplication')
 
 
 def handling_editor(base_view):
@@ -116,7 +116,7 @@ def handling_editor(base_view):
         user = request.user
         try:
             project = ActiveProject.objects.get(slug=kwargs['project_slug'])
-            if user.is_admin and user == project.editor:
+            if user.has_access_to_admin_console() and user == project.editor:
                 kwargs['project'] = project
                 return base_view(request, *args, **kwargs)
         except ActiveProject.DoesNotExist:
@@ -128,7 +128,7 @@ def handling_editor(base_view):
 
 
 def console_home(request):
-    if not request.user.is_authenticated or not request.user.is_admin:
+    if not request.user.is_authenticated or not request.user.has_access_to_admin_console():
         raise PermissionDenied
     return render(request, 'console/console_home.html', {'console_home_nav': True})
 
@@ -1005,7 +1005,7 @@ def users(request, group='all'):
         login_time_count=Count('login_time')
     ).order_by('username')
     if group == 'admin':
-        admin_users = user_list.filter(is_admin=True)
+        admin_users = user_list.filter(groups__name='Admin')
         return render(request, 'console/users_admin.html', {
             'admin_users': admin_users,
             'group': group,
@@ -1524,7 +1524,7 @@ def credentialed_user_info(request, username):
 
 
 @login_required
-@user_passes_test(is_admin, redirect_field_name='project_home')
+@user_passes_test(has_change_credentialapplication_permission, redirect_field_name='project_home')
 def training_list(request, status):
     """
     List all training applications.
@@ -1601,7 +1601,7 @@ def search_training_applications(request, display_training):
 
 
 @login_required
-@user_passes_test(is_admin, redirect_field_name='project_home')
+@user_passes_test(has_change_credentialapplication_permission, redirect_field_name='project_home')
 def training_process(request, pk):
     training = get_object_or_404(Training.objects.select_related('training_type', 'user__profile').get_review(), pk=pk)
 
@@ -1678,7 +1678,7 @@ def training_process(request, pk):
 
 
 @login_required
-@user_passes_test(is_admin, redirect_field_name='project_home')
+@user_passes_test(has_change_credentialapplication_permission, redirect_field_name='project_home')
 def training_detail(request, pk):
     training = get_object_or_404(Training.objects.prefetch_related('training_type'), pk=pk)
 
@@ -2401,10 +2401,98 @@ def known_references(request):
         'all_known_ref': all_known_ref, 'known_ref_nav': True})
 
 
+@permission_required('physionet.change_frontpagebutton', raise_exception=True)
+def frontpage_buttons(request):
+
+    if request.method == 'POST':
+        up = request.POST.get('up')
+        if up:
+            front_page_button = get_object_or_404(FrontPageButton, pk=up)
+            front_page_button.move_up()
+
+        down = request.POST.get('down')
+        if down:
+            front_page_button = get_object_or_404(FrontPageButton, pk=down)
+            front_page_button.move_down()
+        return HttpResponseRedirect(reverse('frontpage_buttons'))
+
+    frontpage_buttons = FrontPageButton.objects.all()
+    return render(
+        request,
+        'console/frontpage_button/index.html',
+        {'frontpage_buttons': frontpage_buttons, 'frontpage_buttons_nav': True})
+
+
+@permission_required('physionet.change_frontpagebutton', raise_exception=True)
+def frontpage_button_add(request):
+    if request.method == 'POST':
+        frontpage_button_form = forms.FrontPageButtonForm(data=request.POST)
+        if frontpage_button_form.is_valid():
+            frontpage_button_form.save()
+            messages.success(request, "The frontpage button was successfully created.")
+            return HttpResponseRedirect(reverse('frontpage_buttons'))
+    else:
+        frontpage_button_form = forms.FrontPageButtonForm()
+
+    return render(
+        request,
+        'console/frontpage_button/add.html',
+        {'frontpage_button_form': frontpage_button_form},
+    )
+
+
+@permission_required('physionet.change_frontpagebutton', raise_exception=True)
+def frontpage_button_edit(request, button_pk):
+
+    frontpage_button = get_object_or_404(FrontPageButton, pk=button_pk)
+    if request.method == 'POST':
+        frontpage_button_form = forms.FrontPageButtonForm(instance=frontpage_button, data=request.POST)
+        if frontpage_button_form.is_valid():
+            frontpage_button_form.save()
+            messages.success(request, "The front page was successfully edited.")
+            return HttpResponseRedirect(reverse('frontpage_buttons'))
+    else:
+        frontpage_button_form = forms.FrontPageButtonForm(instance=frontpage_button)
+
+    return render(
+        request,
+        'console/frontpage_button/edit.html',
+        {
+            'frontpage_button_form': frontpage_button_form,
+            'button': frontpage_button
+        }
+    )
+
+
+@permission_required('physionet.change_frontpagebutton', raise_exception=True)
+def frontpage_button_delete(request, button_pk):
+    frontpage_button = get_object_or_404(FrontPageButton, pk=button_pk)
+    if request.method == 'POST':
+        frontpage_button.delete()
+        messages.success(request, "The front page button was successfully deleted.")
+
+    return HttpResponseRedirect(reverse('frontpage_buttons'))
+
+
 @permission_required('physionet.change_staticpage', raise_exception=True)
 def static_pages(request):
-    pages = StaticPage.objects.all()
-    return render(request, 'console/static_pages.html', {'pages': pages, 'static_pages_nav': True})
+    if request.method == 'POST':
+        up = request.POST.get('up')
+        if up:
+            page = get_object_or_404(StaticPage, pk=up)
+            page.move_up()
+
+        down = request.POST.get('down')
+        if down:
+            page = get_object_or_404(StaticPage, pk=down)
+            page.move_down()
+        return HttpResponseRedirect(reverse('static_pages'))
+
+    pages = StaticPage.objects.all().order_by("nav_order")
+    return render(
+        request,
+        'console/static_page/index.html',
+        {'pages': pages, 'static_pages_nav': True})
 
 
 @permission_required('physionet.change_staticpage', raise_exception=True)
@@ -2420,7 +2508,7 @@ def static_page_add(request):
 
     return render(
         request,
-        'console/static_page_add.html',
+        'console/static_page/add.html',
         {'static_page_form': static_page_form},
     )
 
@@ -2440,7 +2528,7 @@ def static_page_edit(request, page_pk):
 
     return render(
         request,
-        'console/static_page_edit.html',
+        'console/static_page/edit.html',
         {'static_page_form': static_page_form, 'page': static_page},
     )
 

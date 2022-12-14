@@ -79,7 +79,7 @@ class SSOLoginView(auth_views.LoginView):
     def get_context_data(self, *args, **kwargs):
         context = super().get_context_data(*args, **kwargs)
         try:
-            login_static_page = StaticPage.objects.get(url='/login/')
+            login_static_page = StaticPage.objects.get(url='/about/login/')
             instruction_sections = Section.objects.filter(static_page=login_static_page)
         except StaticPage.DoesNotExist:
             instruction_sections = []
@@ -766,7 +766,7 @@ def training_report(request, training_id):
     Serve a training report file
     """
     trainings = Training.objects.all()
-    if not request.user.is_admin:
+    if not request.user.has_perm('user.change_credentialapplication'):
         trainings = trainings.filter(user=request.user)
 
     training = get_object_or_404(trainings, id=training_id)
