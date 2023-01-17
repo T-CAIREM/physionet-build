@@ -13,7 +13,7 @@ from django.core.validators import EmailValidator, FileExtensionValidator
 from django.db import DatabaseError, models, transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.db.models import CharField
+from django.db.models import CharField, Q
 from django.db.models.functions import Lower
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -26,7 +26,7 @@ from project.modelcomponents.access import AccessPolicy
 from project.modelcomponents.fields import SafeHTMLField
 from user import validators
 from user.userfiles import UserFiles
-from user.enums import TrainingStatus, RequiredField, EventCategory
+from user.enums import TrainingStatus, RequiredField
 from user.managers import TrainingQuerySet
 
 logger = logging.getLogger(__name__)
@@ -433,6 +433,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         """
         return self.is_superuser or self.has_perm('user.can_view_admin_console')
 
+    @staticmethod
+    def get_users_with_permission(permission_codename):
+        """
+        Returns a queryset of users who have the specified permission.
+        If the Permission object does not exist, an empty queryset is returned.
+        """
+        try:
+            can_edit_activeprojects_perm = Permission.objects.get(codename=permission_codename)
+        except Permission.DoesNotExist:
+            can_edit_activeprojects_perm = None
+
+        if can_edit_activeprojects_perm:
+            users = User.objects.filter(Q(groups__permissions=can_edit_activeprojects_perm)
+                                        | Q(user_permissions=can_edit_activeprojects_perm)).distinct()
+        else:
+            users = User.objects.none()
+
+        return users
+
 
 class UserLogin(models.Model):
     """Represent users' logins, one per record"""
@@ -793,6 +812,9 @@ class CredentialApplication(models.Model):
 
     class Meta:
         default_permissions = ('change',)
+
+    def get_traffic_status(self):
+        return 'orange'
 
     def file_root(self):
         """Location for storing files associated with the application"""
@@ -1186,52 +1208,3 @@ class CodeOfConductSignature(models.Model):
 
     class Meta:
         default_permissions = ()
-
-
-class Event(models.Model):
-    """
-    Captures information on events such as datathons, workshops and classes.
-    Used to allow event hosts to assist with credentialing.
-    """
-    title = models.CharField(max_length=64)
-    description = models.TextField(blank=True, null=True)
-    category = models.CharField(choices=EventCategory.choices, max_length=32)
-    host = models.ForeignKey(User, on_delete=models.CASCADE)
-    added_datetime = models.DateTimeField(auto_now_add=True)
-    start_date = models.DateField(default=timezone.now)
-    end_date = models.DateField(default=timezone.now)
-    slug = models.SlugField(unique=True, default=get_random_string)
-    allowed_domains = models.CharField(blank=True, null=True, validators=[
-                                       validators.validate_domain_list], max_length=100)
-
-    class Meta:
-        unique_together = ('title', 'host')
-        permissions = [('view_all_events', 'Can view all events in the console'),
-                       ('view_event_menu', 'Can view event menu in the navbar')]
-
-    def __str__(self):
-        return self.title
-
-    def enroll_user(self, user):
-        """
-        Adds a participant to an event.
-        """
-        with transaction.atomic():
-            EventParticipant.objects.create(user=user, event=self)
-            permission = Permission.objects.get(codename="view_event_menu")
-            user.user_permissions.add(permission)
-
-
-class EventParticipant(models.Model):
-    """
-    Captures information about participants in an event.
-    """
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='participants')
-    added_datetime = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ('user', 'event')
-
-    def __str__(self):
-        return self.user.get_full_name()

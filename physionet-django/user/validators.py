@@ -1,5 +1,6 @@
 import re
 
+from django.conf import settings
 from django.contrib.auth.validators import UnicodeUsernameValidator
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
@@ -249,9 +250,10 @@ def validate_alphaplusplus(value):
         raise ValidationError('Letters, numbers, spaces, underscores, hyphens, apostrophes, periods, and commas only. Must begin with a letter or number.')
 
 
-def validate_domain_list(value):
+def validate_training_file_size(value):
     """
-    Validate a list of comma separated email domains ('mit.edu, buffalo.edu, gmail.com').
+    Validate the file size of a file.
     """
-    if not re.fullmatch(r'(\w+\.\w+,*\s*)*', value):
-        raise ValidationError('Must be separated with commas.')
+    if value.size > settings.MAX_TRAINING_REPORT_UPLOAD_SIZE:
+        upload_file_size_limit = settings.MAX_TRAINING_REPORT_UPLOAD_SIZE // 1024
+        raise ValidationError(f'The maximum file size that can be uploaded is {upload_file_size_limit} KB.')

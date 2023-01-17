@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'ckeditor',
     # 'django_cron',
     'background_task',
+    'rest_framework',
 
     'user',
     'project',
@@ -58,6 +59,7 @@ INSTALLED_APPS = [
     'lightwave',
     'physionet',
     'django_sass',
+    'events',
 ]
 
 if ENABLE_SSO:
@@ -73,6 +75,13 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware'
 ]
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.BasicAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ]
+}
 
 CRON_CLASSES = [
     "physionet.cron.RemoveUnverifiedEmails",
@@ -153,9 +162,12 @@ STATIC_URL = '/static/'
 STATICFILES_DIRS = [os.path.join(BASE_DIR,'static')]
 # Google Storge service account credentials
 if config('GOOGLE_APPLICATION_CREDENTIALS', default=None):
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.path.join(
+    GOOGLE_APPLICATION_CREDENTIALS = os.path.join(
         BASE_DIR,
         config('GOOGLE_APPLICATION_CREDENTIALS'))
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = GOOGLE_APPLICATION_CREDENTIALS
+else:
+    GOOGLE_APPLICATION_CREDENTIALS = None
 
 # Maintenance mode
 
@@ -545,3 +557,12 @@ PLATFORM_WIDE_CITATION = {
 
 SOURCE_CODE_REPOSITORY_LINK = config('SOURCE_CODE_REPOSITORY_LINK',
                                      default='https://github.com/MIT-LCP/physionet-build')
+MAX_TRAINING_REPORT_UPLOAD_SIZE = config('MAX_TRAINING_REPORT_UPLOAD_SIZE', cast=int, default=1048576)
+
+# User model configurable settings
+MAX_EMAILS_PER_USER = config('MAX_EMAILS_PER_USER', cast=int, default=10)
+
+# Updating to Django to 3.2 requires DEFAULT_AUTO_FIELD to be specified
+# Starting at 3.2, new projects are generated with DEFAULT_AUTO_FIELD set to BigAutoField
+# https://docs.djangoproject.com/en/3.2/releases/3.2/#customizing-type-of-auto-created-primary-keys
+DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'

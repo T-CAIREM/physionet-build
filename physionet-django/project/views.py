@@ -21,10 +21,9 @@ from django.template import loader
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
-from google.cloud.storage._signing import generate_signed_url_v4
 from physionet.forms import set_saved_fields_cookie
 from physionet.middleware.maintenance import ServiceUnavailable
-from physionet.storage import MediaStorage
+from physionet.storage import generate_signed_url_helper
 from physionet.utility import serve_file
 from project import forms, utility
 from project.fileviews import display_project_file
@@ -923,9 +922,6 @@ def project_files_panel(request, project_slug, **kwargs):
     else:
         files_editable = False
 
-    if not request.is_ajax():
-        return redirect('project_files', project_slug=project_slug)
-
     (display_files, display_dirs, dir_breadcrumbs, parent_dir,
      file_error) = get_project_file_info(project=project, subdir=subdir)
     file_warning = get_project_file_warning(display_files, display_dirs,
@@ -1146,9 +1142,6 @@ def preview_files_panel(request, project_slug, **kwargs):
     """
     project = kwargs['project']
     subdir = request.GET['subdir']
-
-    if not request.is_ajax():
-        return redirect('project_preview', project_slug=project_slug)
 
     (display_files, display_dirs, dir_breadcrumbs, parent_dir,
      file_error) = get_project_file_info(project=project, subdir=subdir)
@@ -1569,10 +1562,6 @@ def published_files_panel(request, project_slug, version):
     if subdir is None:
         raise Http404()
 
-    if not request.is_ajax():
-        return redirect('published_project', project_slug=project_slug,
-            version=version)
-
     user = request.user
 
     # Anonymous access authentication
@@ -1803,6 +1792,7 @@ def published_project(request, project_slug, version, subdir=''):
     # derived_projects = project.derived_publishedprojects.all()
     data_access = DataAccess.objects.filter(project=project)
     user = request.user
+    _, _, _, _, _, latest_version = project.info_card()
     citations = project.citation_text_all()
     platform_citations = project.get_platform_citation()
     show_platform_wide_citation = any(platform_citations.values())
@@ -1854,6 +1844,7 @@ def published_project(request, project_slug, version, subdir=''):
         'has_required_training': has_required_training,
         'current_site': current_site,
         'bulk_url_prefix': bulk_url_prefix,
+        'latest_version': latest_version,
         'citations': citations,
         'news': news,
         'all_project_versions': all_project_versions,
@@ -1928,6 +1919,7 @@ def sign_dua(request, project_slug, version):
 
     if (
         project.deprecated_files
+        or project.embargo_active()
         or project.access_policy not in {AccessPolicy.RESTRICTED, AccessPolicy.CREDENTIALED}
         or project.has_access(user)
     ):
@@ -2304,11 +2296,10 @@ def generate_signed_url(request, project_slug):
     if size <= 0:
         return JsonResponse({'detail': 'The file size cannot be a negative value.'}, status=400)
 
-    if not filename.isascii():
-        return JsonResponse({'detail': 'The filename contains non-ascii characters.'}, status=400)
-
-    if ' ' in filename:
-        return JsonResponse({'detail': 'The filename contains whitespaces.'}, status=400)
+    try:
+        validate_filename(filename)
+    except ValidationError as e:
+        return JsonResponse({'detail': e.messages}, status=400)
 
     queryset = ActiveProject.objects.all()
     project = get_object_or_404(queryset, slug=project_slug)
@@ -2319,16 +2310,13 @@ def generate_signed_url(request, project_slug):
     if size > project.get_storage_info().remaining:
         return JsonResponse({'detail': 'The file size cannot be greater than the remaining space.'}, status=400)
 
-    storage = MediaStorage()
-    canonical_resource = f'/{storage.bucket.name}/active-projects/{project_slug}/{filename.strip("/")}'
+    canonical_resource = f'active-projects/{project_slug}/{filename.strip("/")}'
 
-    url = generate_signed_url_v4(
-        storage.client._credentials,
-        resource=canonical_resource,
-        api_access_endpoint='https://storage.googleapis.com',
+    url = generate_signed_url_helper(
+        version='v4',
+        blob_name=canonical_resource,
         expiration=dt.timedelta(days=1),
-        method='PUT',
-        headers={'X-Upload-Content-Length': str(size)},
+        size=size
     )
 
     data = f'filename: {filename};size: {size // (1024)}kB'
