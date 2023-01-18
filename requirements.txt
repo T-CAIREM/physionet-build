@@ -459,3 +459,5 @@ libsass==0.21.0 \
     --hash=sha256:e2b1a7d093f2e76dc694c17c0c285e846d0b0deb0e8b21dc852ba1a3a4e2f1d6
 zxcvbn==4.4.28 \
     --hash=sha256:151bd816817e645e9064c354b13544f85137ea3320ca3be1fb6873ea75ef7dc1
+hdn-research-environment==1.1.0 \
+    --hash=sha256:15aa1d692fad508230f6e03f4fff40a935ef23bb1b09c351e3967e1e76911e6e
