@@ -102,10 +102,6 @@ def make_checksum_background(pid):
     project.set_storage_info()
 
 
-def has_change_credentialapplication_permission(user, *args, **kwargs):
-    return user.has_perm('user.change_credentialapplication')
-
-
 def handling_editor(base_view):
     """
     Access decorator. The user must be the editor of the project.
@@ -1551,8 +1547,7 @@ def credentialed_user_info(request, username):
     return render(request, 'console/credentialed_user_info.html', {'c_user': c_user, 'application': application})
 
 
-@login_required
-@user_passes_test(has_change_credentialapplication_permission, redirect_field_name='project_home')
+@permission_required('user.can_review_training', raise_exception=True)
 def training_list(request, status):
     """
     List all training applications.
@@ -1628,8 +1623,7 @@ def search_training_applications(request, display_training):
     return display_training
 
 
-@login_required
-@user_passes_test(has_change_credentialapplication_permission, redirect_field_name='project_home')
+@permission_required('user.can_review_training', raise_exception=True)
 def training_process(request, pk):
     training = get_object_or_404(Training.objects.select_related('training_type', 'user__profile').get_review(), pk=pk)
 
@@ -1705,8 +1699,7 @@ def training_process(request, pk):
     )
 
 
-@login_required
-@user_passes_test(has_change_credentialapplication_permission, redirect_field_name='project_home')
+@permission_required('user.can_review_training', raise_exception=True)
 def training_detail(request, pk):
     training = get_object_or_404(Training.objects.prefetch_related('training_type'), pk=pk)
 
