@@ -98,7 +98,6 @@ if settings.DEBUG:
 
     # debug toolbar
     urlpatterns.append(path('__debug__/', include(debug_toolbar.urls)))
-
 # Parameters for testing URLs (see physionet/test_urls.py)
 TEST_DEFAULTS = {
     'dua_slug': 'physionet-credentialed-health-data-dua',
@@ -111,3 +110,5 @@ TEST_CASES = {
         '_skip_': lambda: (shutil.which('sandboxed-lightwave') is None),
     },
 }
+if settings.ENABLE_RESEARCH_ENVIRONMENTS:
+    urlpatterns.append(path('environments/', include('environment.urls')))
