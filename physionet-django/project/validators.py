@@ -6,6 +6,7 @@ from django.utils.translation import gettext as _
 
 MAX_FILENAME_LENGTH = 100
 MAX_PROJECT_SLUG_LENGTH = 30
+MAX_GCS_OBJECT_NAME_LENGTH = 256
 
 _good_name_pattern = re.compile(r'\w+([\w\-\.]*\w+)?', re.ASCII)
 _bad_name_pattern = re.compile(r'^(?:con|nul|aux|prn|com\d|lpt\d)(?:\.|$)',
@@ -130,7 +131,31 @@ def validate_topic(value):
         raise ValidationError('Letters, numbers, spaces, underscores, and hyphens only. Must begin with a letter or number.')
 
 
-validate_environment_group_name = RegexValidator(
-    "^[a-z](?:[-a-z0-9]{4,28}[a-z0-9])$",
-    message="The Google Group name in not valid",
-)
+def validate_gcs_bucket_object(filename, size):
+    """
+    Validate a filename and size for upload to gcs bucket objects.
+
+    File names may be at most 256 characters long.
+    Only letters, numbers, dashes, underscores, dots, and / allowed,
+    or empty. No consecutive dots or fwd slashes.
+
+    File size cannot be negative.
+    """
+    if not filename or not size:
+        raise ValidationError('You must provide the filename and the size.')
+
+    if not size.isnumeric():
+        raise ValidationError('The size must be a numeric value.')
+
+    size = int(size)
+    if size <= 0:
+        raise ValidationError('The file size cannot be a negative value.')
+
+    if len(filename) > MAX_GCS_OBJECT_NAME_LENGTH:
+        raise ValidationError(
+            f'Invalid file name "{filename}". '
+            f'File names may be at most {MAX_GCS_OBJECT_NAME_LENGTH} characters long.'
+        )
+
+    for path_segment in filename.split('/'):
+        validate_filename(path_segment)

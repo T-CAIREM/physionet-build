@@ -51,7 +51,7 @@ from project.models import (
     UploadedDocument,
 )
 from project.projectfiles import ProjectFiles
-from project.validators import validate_filename
+from project.validators import validate_filename, validate_gcs_bucket_object
 from user.forms import AssociatedEmailChoiceForm
 from user.models import CloudInformation, CredentialApplication, LegacyCredential, User, Training
 
@@ -1732,7 +1732,7 @@ def published_project_license(request, project_slug, version):
         'license_content':license_content})
 
 
-def published_project_required_trainings(request, project_slug, version):
+def published_project_required_training(request, project_slug, version):
     """Displays a published project's required training"""
     project = get_object_or_404(PublishedProject, slug=project_slug, version=version)
 
@@ -1740,8 +1740,8 @@ def published_project_required_trainings(request, project_slug, version):
 
     return render(
         request,
-        'project/published_project_required_trainings.html',
-        {'project': project, 'required_trainings': required_trainings},
+        'project/published_project_required_training.html',
+        {'project': project, 'required_training': required_trainings},
     )
 
 
@@ -2031,7 +2031,9 @@ def data_access_request_status(request, project_slug, version):
 @login_required
 def data_access_request_status_detail(request, project_slug, version, pk):
     project = get_object_or_404(PublishedProject, slug=project_slug, version=version)
-    access_request = get_object_or_404(DataAccessRequest, project=project, pk=pk)
+    access_request = get_object_or_404(
+        DataAccessRequest, requester=request.user, project=project, pk=pk
+    )
 
     return render(request, 'project/data_access_request_status_detail.html', {
         'access_request': access_request,
@@ -2220,20 +2222,19 @@ def published_project_request_access(request, project_slug, version, access_type
 
     for access in data_access:
         if access_type == 2 and access.platform == access_type:
-            message = utility.grant_aws_open_data_access(user, project)
-            error_messages = ["Access could not be granted.",
-                              "There was an error granting access."]
-            if message not in error_messages:
-                notification.notify_aws_access_request(user, project, access, True)
+            message, granted_access = utility.grant_aws_open_data_access(user, project)
+            notification.notify_aws_access_request(user, project, access, granted_access)
+            if granted_access:
                 messages.success(request, message)
             else:
-                notification.notify_aws_access_request(user, project, access, False)
                 messages.error(request, message)
         elif access_type in [3, 4] and access.platform == access_type:
-            message = utility.grant_gcp_group_access(user, project, access)
-            if message:
-                notification.notify_gcp_access_request(access, user, project)
+            message, granted_access = utility.grant_gcp_group_access(user, project, access)
+            notification.notify_gcp_access_request(access, user, project, granted_access)
+            if granted_access:
                 messages.success(request, message)
+            else:
+                messages.error(request, message)
 
     return redirect('published_project', project_slug=project_slug, version=version)
 
@@ -2286,21 +2287,12 @@ def generate_signed_url(request, project_slug):
     filename = request.POST.get('filename')
     size = request.POST.get('size')
 
-    if not filename or not size:
-        return JsonResponse({'detail': 'You must provide the filename and the size.'}, status=400)
-
-    if not size.isnumeric():
-        return JsonResponse({'detail': 'The file size must be a numeric value.'}, status=400)
-
-    size = int(size)
-    if size <= 0:
-        return JsonResponse({'detail': 'The file size cannot be a negative value.'}, status=400)
-
     try:
-        validate_filename(filename)
+        validate_gcs_bucket_object(filename, size)
     except ValidationError as e:
         return JsonResponse({'detail': e.messages}, status=400)
 
+    size = int(size)
     queryset = ActiveProject.objects.all()
     project = get_object_or_404(queryset, slug=project_slug)
 

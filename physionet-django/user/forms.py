@@ -490,6 +490,11 @@ class ResearchCAF(forms.ModelForm):
             'research_summary': 'Research Topic'
         }
 
+    def clean_research_summary(self):
+        research_summary = self.cleaned_data['research_summary']
+        if len(research_summary.split()) < 20:
+            raise forms.ValidationError("Please provide more information about your research topic.")
+        return research_summary
 
 class ReferenceCAF(forms.ModelForm):
     """
@@ -585,7 +590,7 @@ class CredentialApplicationForm(forms.ModelForm):
                        data['reference_organization'],
                        data['reference_title']]
 
-        ref_required = data['researcher_category'] in [0, 1, 6, 7]
+        ref_required = True
         supervisor_required = data['researcher_category'] in [0, 1, 7]
         state_required = data['country'] in ['US', 'CA']
 

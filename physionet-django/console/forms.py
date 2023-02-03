@@ -93,7 +93,9 @@ class AssignEditorForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['editor'].queryset = User.get_users_with_permission('can_edit_activeprojects').order_by('username')
+        self.fields['editor'].queryset = \
+            User.get_users_with_permission('project', 'can_edit_activeprojects') \
+                .order_by('username')
 
     def clean_project(self):
         pid = self.cleaned_data['project']
@@ -114,7 +116,8 @@ class ReassignEditorForm(forms.Form):
         Set the appropriate queryset
         """
         super().__init__(*args, **kwargs)
-        users = User.get_users_with_permission('can_edit_activeprojects').order_by('username')
+        users = User.get_users_with_permission('project', 'can_edit_activeprojects') \
+                    .order_by('username')
         users = users.exclude(username=user.username)
         self.fields['editor'].queryset = users
 
