@@ -159,3 +159,9 @@ def validate_gcs_bucket_object(filename, size):
 
     for path_segment in filename.split('/'):
         validate_filename(path_segment)
+
+    
+validate_environment_group_name = RegexValidator(
+    "^[a-z](?:[-a-z0-9]{4,28}[a-z0-9])$",
+    message="The Google Group name in not valid",
+)
