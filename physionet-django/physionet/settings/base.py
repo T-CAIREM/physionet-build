@@ -30,7 +30,8 @@ SECRET_KEY = config('SECRET_KEY')
 ENABLE_SSO = config('ENABLE_SSO', default=False, cast=bool)
 SSO_REMOTE_USER_HEADER = config('SSO_REMOTE_USER_HEADER', default='HTTP_REMOTE_USER')
 SSO_LOGIN_BUTTON_TEXT = config('SSO_LOGIN_BUTTON_TEXT', default='Login')
-
+GCP_OAUTH_CLIENT_ID = config('GCP_OAUTH_CLIENT_ID')
+GCP_OAUTH_CLIENT_SECRET = config('GCP_OAUTH_CLIENT_SECRET')
 
 # Application definition
 

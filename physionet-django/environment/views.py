@@ -1,0 +1,372 @@
+import json
+
+from django.conf import settings
+from django.shortcuts import render, redirect
+from django.http import JsonResponse
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_http_methods, require_GET
+from google.cloud.workflows.executions_v1beta.types.executions import Execution
+
+import environment.services as services
+import environment.quotas as quotas
+from environment.forms import BillingAccountIdForm, CreateResearchEnvironmentForm
+from environment.exceptions import BillingVerificationFailed
+from environment.decorators import (
+    cloud_identity_required,
+    billing_setup_required,
+    workspace_setup_required,
+    require_DELETE,
+    require_PATCH,
+)
+from environment.entities import Region, InstanceType
+from environment.utilities import (
+    user_has_cloud_identity,
+    user_has_billing_setup,
+)
+from environment.models import CloudIdentity, Workflow
+from collections import namedtuple
+import google.oauth2.credentials
+import google_auth_oauthlib.flow
+
+
+
+@require_http_methods(["GET", "POST"])
+@login_required
+def identity_provisioning(request):
+    if user_has_cloud_identity(request.user):
+        return redirect("billing_setup")
+    # user_info = services.get_user_info(request.user)
+    # if user_info.get("user-status") == "user-added-in-cloud-identity":
+    #     CloudIdentity.objects.create(
+    #         user=request.user,
+    #         gcp_user_id=user_info.get("user-id"),
+    #         email=user_info.get("email-id"),
+    #     )
+    #     return redirect("billing_setup")
+
+    if request.method == "POST":
+        # otp, _ = services.create_cloud_identity(request.user)
+        request.session["cloud_identity_otp"] = 'abc'
+        return redirect("billing_setup")
+
+    return render(request, "environment/identity_provisioning.html")
+
+
+@require_http_methods(["GET"])
+@login_required
+@cloud_identity_required
+def google_oauth(request):
+    flow = google_auth_oauthlib.flow.Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.GCP_OAUTH_CLIENT_ID,
+                "client_secret": settings.GCP_OAUTH_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://accounts.google.com/o/oauth2/token"
+            }
+        },
+        scopes=['https://www.googleapis.com/auth/drive.metadata.readonly'])
+
+    flow.redirect_uri = "http://localhost:8000/accounts/google/login/callback/"
+
+    authorization_url, state = flow.authorization_url(
+        # Enable offline access so that you can refresh an access token without
+        # re-prompting the user for permission. Recommended for web server apps.
+        access_type='offline',
+        # Enable incremental authorization. Recommended as a best practice.
+        include_granted_scopes='true')
+
+    return JsonResponse({"authorization_url": authorization_url})
+
+@require_http_methods(["GET", "POST"])
+@login_required
+@cloud_identity_required
+def billing_setup(request):
+    # if user_has_billing_setup(request.user):
+    #     return redirect("research_environments")
+
+    if request.method == "POST":
+        form = BillingAccountIdForm(request.POST)
+        if form.is_valid():
+            try:
+                workflow_invoker_response = services.verify_billing_and_create_workspace(
+                    user=request.user,
+                    billing_id=form.cleaned_data["billing_account_id"],
+                )
+
+                services.persist_workflow(
+                    user=request.user,
+                    execution_resource_name=workflow_invoker_response["execution-id"],
+                    project_id=None,
+                    type=Workflow.CREATE,
+                )
+
+                services.create_billing_setup(
+                    request.user, form.cleaned_data["billing_account_id"]
+                )
+                return redirect("research_environments")
+            except BillingVerificationFailed as err:
+                form.add_error("billing_account_id", err)
+    else:
+        form = BillingAccountIdForm()
+
+    cloud_identity = request.user.cloud_identity
+    context = {
+        "email": cloud_identity.email,
+        "otp": request.session.get("cloud_identity_otp"),
+        "form": form,
+    }
+    return render(request, "environment/billing_setup.html", context)
+
+
+@require_GET
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def workspace_setup(request):
+    if request.user.cloud_identity.initial_workspace_setup_done:
+        return redirect("research_environments")
+
+    is_workspace_done = services.is_user_workspace_setup_done(request.user)
+    if not is_workspace_done:
+        return render(request, "environment/workspace_being_provisioned.html")
+    services.mark_user_workspace_setup_as_done(request.user)
+    return redirect("research_environments")
+
+
+@require_GET
+@login_required
+@cloud_identity_required
+@billing_setup_required
+@workspace_setup_required
+def research_environments(request):
+    # environment_project_workflow_triplets = services.get_environments_with_projects(
+    #     request.user
+    # )
+    # environments = map(lambda pair: pair[0], environment_project_workflow_triplets)
+    # available_project_environment_workflow_triplets = (
+    #     services.get_available_projects_with_environments(
+    #         request.user,
+    #         environments,
+    #     )
+    # )
+    # projects_with_environments_being_created = (
+    #     services.get_projects_with_environment_being_created(
+    #         available_project_environment_workflow_triplets
+    #     )
+    # )
+    # environment_projects_pairs_with_creating = (
+    #     projects_with_environments_being_created + environment_project_workflow_triplets
+    # )
+
+    context = {
+        # "environment_project_workflow_triplets": environment_projects_pairs_with_creating,
+        # "available_project_environment_workflow_triplets": available_project_environment_workflow_triplets,
+        "cloud_identity": request.user.cloud_identity,
+    }
+
+    return render(
+        request,
+        "environment/research_environments.html",
+        context,
+    )
+
+
+@require_GET
+@login_required
+@cloud_identity_required
+@billing_setup_required
+@workspace_setup_required
+def research_environments_partial(request):
+    environment_project_workflow_triplets = services.get_environments_with_projects(
+        request.user
+    )
+
+    context = {
+        "environment_project_workflow_triplets": environment_project_workflow_triplets,
+    }
+
+    execution_resource_name = request.GET.get("execution_resource_name")
+    if execution_resource_name:
+        workflow = Workflow.objects.get(execution_resource_name=execution_resource_name)
+        workflow_state_context = {
+            "recent_workflow": workflow,
+            "recent_workflow_failed": workflow.status == Workflow.FAILED,
+            "recent_workflow_succeeded": workflow.status == Workflow.SUCCESS,
+        }
+        context = {**context, **workflow_state_context}
+
+    return render(
+        request,
+        "environment/_available_environments_list.html",
+        context,
+    )
+
+
+@require_http_methods(["GET", "POST"])
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def create_research_environment(request, project_slug, project_version):
+    # project = services.get_available_projects(request.user).get(
+    #     slug=project_slug, version=project_version
+    # )
+
+    if request.method == "POST":
+        form = CreateResearchEnvironmentForm(request.POST)
+        if form.is_valid():
+            cpu_usage = services.cpu_usage(
+                value=InstanceType(form.cleaned_data["instance_type"]).cpus(),
+                user=request.user,
+            )
+            if cpu_usage <= quotas.MAX_CPU_USAGE:
+                services.create_research_environment(
+                    user=request.user,
+                    project=None,
+                    region=form.cleaned_data["region"],
+                    instance_type=form.cleaned_data["instance_type"],
+                    environment_type=form.cleaned_data["environment_type"],
+                    persistent_disk=form.cleaned_data.get("persistent_disk"),
+                )
+                return redirect("research_environments")
+            else:
+                messages.error(
+                    request,
+                    f"Quota exceeded - the specified configuration would use {cpu_usage} out of {quotas.MAX_CPU_USAGE} CPUs",
+                )
+    else:
+        form = CreateResearchEnvironmentForm()
+
+    # exceeded_quotas = services.exceeded_quotas(request.user)
+    GcpExpectedCosts = namedtuple("GcpExpectedCosts", "resource cost time_unit", defaults=["per Hour"])
+    expected_costs_dict = {
+        "us-central1": [
+            GcpExpectedCosts("n1-standard-1", 0.05), GcpExpectedCosts("n1-standard-2", 0.09),
+            GcpExpectedCosts("n1-standard-4", 0.19),
+            GcpExpectedCosts("n1-standard-8", 0.38), GcpExpectedCosts("n1-standard-16", 0.76),
+            GcpExpectedCosts("Persistent data disk 1GB", 0.05, "per Month")
+        ],
+        "northamerica-northeast1": [
+            GcpExpectedCosts("n1-standard-1", 0.05), GcpExpectedCosts("n1-standard-2", 0.11),
+            GcpExpectedCosts("n1-standard-4", 0.21),
+            GcpExpectedCosts("n1-standard-8", 0.42), GcpExpectedCosts("n1-standard-16", 0.84),
+            GcpExpectedCosts("Persistent data disk 1GB", 0.05, "per Month")
+        ],
+        "europe-west3": [
+            GcpExpectedCosts("n1-standard-1", 0.06), GcpExpectedCosts("n1-standard-2", 0.12),
+            GcpExpectedCosts("n1-standard-4", 0.24),
+            GcpExpectedCosts("n1-standard-8", 0.49), GcpExpectedCosts("n1-standard-16", 0.98),
+            GcpExpectedCosts("Persistent data disk 1GB", 0.05, "per Month")
+        ],
+        "australia-southeast1": [
+            GcpExpectedCosts("n1-standard-1", 0.07), GcpExpectedCosts("n1-standard-2", 0.13),
+            GcpExpectedCosts("n1-standard-4", 0.27),
+            GcpExpectedCosts("n1-standard-8", 0.354), GcpExpectedCosts("n1-standard-16", 1.07),
+            GcpExpectedCosts("Persistent data disk 1GB", 0.05, "per Month")
+        ],
+    }
+    context = {
+        "form": form, "project": {'slug': 5, 'version': 1}, "exceeded_quotas": False, "expected_costs": expected_costs_dict
+    }
+    return render(request, "environment/create_research_environment.html", context)
+
+
+@require_PATCH
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def stop_running_environment(request):
+    data = json.loads(request.body)
+    services.stop_running_environment(
+        user=request.user,
+        project_id=data["project_id"],
+        workbench_id=data["workbench_id"],
+        region=Region(data["region"]),
+    )
+    return JsonResponse({})
+
+
+@require_PATCH
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def start_stopped_environment(request):
+    data = json.loads(request.body)
+    services.start_stopped_environment(
+        user=request.user,
+        project_id=data["project_id"],
+        workbench_id=data["workbench_id"],
+        region=Region(data["region"]),
+    )
+    return JsonResponse({})
+
+
+@require_PATCH
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def change_environment_instance_type(request):
+    data = json.loads(request.body)
+    services.change_environment_instance_type(
+        user=request.user,
+        project_id=data["project_id"],
+        workbench_id=data["workbench_id"],
+        region=Region(data["region"]),
+        new_instance_type=InstanceType(data["instance_type"]),
+    )
+    return JsonResponse({})
+
+
+@require_DELETE
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def delete_environment(request):
+    data = json.loads(request.body)
+    services.delete_environment(
+        user=request.user,
+        project_id=data["project_id"],
+        workbench_id=data["workbench_id"],
+        region=Region(data["region"]),
+    )
+    return JsonResponse({})
+
+
+@require_GET
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def is_workspace_setup_done(request):
+    execution_state = services.get_execution_state(
+        execution_resource_name=request.user.cloud_identity.billing_setup_workflow.execution_resource_name
+    )
+
+    if execution_state == Execution.State.SUCCEEDED:
+        workspace_setup_finished = services.is_user_workspace_setup_done(user=request.user)
+        return JsonResponse({"finished": workspace_setup_finished})
+    elif execution_state == Execution.State.FAILED:
+        services.verify_billing_and_create_workspace(
+            user=request.user,
+            billing_id=request.user.cloud_identity.billing_setup.billing_account_id,
+        )
+    else:
+        return False
+
+
+@require_GET
+@login_required
+@cloud_identity_required
+@billing_setup_required
+def check_execution_status(request):
+    execution_resource_name = request.GET["execution_resource_name"]
+    execution_state = services.get_execution_state(
+        execution_resource_name=execution_resource_name
+    )
+    finished = execution_state != Execution.State.ACTIVE
+    if finished:
+        services.mark_workflow_as_finished(
+            execution_resource_name=execution_resource_name,
+            execution_state=execution_state,
+        )
+    return JsonResponse({"finished": finished})
