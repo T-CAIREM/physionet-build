@@ -1136,7 +1136,7 @@ def users_aws_access_list_json(request):
             dataset['name'] = project_name
             dataset['accounts'] = []
             for user in users_with_awsid:
-                if project.has_access(user):
+                if project.has_access_to_project_and_files(user):
                     dataset['accounts'].append(user.cloud_information.aws_id)
             datasets['datasets'].append(dataset)
 

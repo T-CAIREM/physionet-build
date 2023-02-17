@@ -347,7 +347,7 @@
       <!-- /.sidebar -->
     </div>
     <h2 id="files">Files</h2>
-    {% if project.allow_file_downloads %}
+    {% if project.has_access_to_project %}
     {% if project.deprecated_files %}
       <div class="alert alert-danger col-md-8" role="alert">
         {% if project.is_latest_version %}
@@ -364,7 +364,7 @@
         The files in this project version are under embargo until: {{ project.embargo_end_date|date }}
       </div>
     {% else %}
-      {% if has_access %}
+      {% if has_access_to_project_and_files %}
         {#  refactored code goes here            #}
         <p>Total uncompressed size: {{ main_size }}.</p>
         {# ZIP START #}
@@ -438,12 +438,12 @@
           {% include "project/files_panel.html" %}
         </div>
       {% else %}
-        {% include "project/published_project_unauthorized.html" %}
+        {% include "project/published_project_denied_downloads.html" %}
       {% endif %}
 
     {% endif %}
     {% else %}
-    {% include "project/published_project_denied_downloads.html" %}
+    {% include "project/published_project_unauthorized.html" %}
     {% endif %}
     <br>
     {% if accepted_access_requests %}

@@ -206,16 +206,16 @@ class PublishedProject(Metadata, SubmissionInfo):
         return reverse('display_published_project_file',
             args=(self.slug, self.version, os.path.join(subdir, file)))
 
-    def has_access(self, user):
+    def has_access_to_project_and_files(self, user):
+        return self.allow_file_downloads and self.has_access_to_project(user)
+
+    def has_access_to_project(self, user):
         """
         Whether the user has access to this project
         The logic should mirror PublishedProjectManager#accessible_by,
         but for a specific project.
         """
         if self.deprecated_files:
-            return False
-
-        if not self.allow_file_downloads:
             return False
 
         if self.access_policy == AccessPolicy.OPEN:
