@@ -206,10 +206,10 @@ class PublishedProject(Metadata, SubmissionInfo):
         return reverse('display_published_project_file',
             args=(self.slug, self.version, os.path.join(subdir, file)))
 
-    def has_access_to_project_and_files(self, user):
-        return self.allow_file_downloads and self.has_access_to_project(user)
+    def can_view_files(self, user):
+        return self.allow_file_downloads and self.is_authorized(user)
 
-    def has_access_to_project(self, user):
+    def is_authorized(self, user):
         """
         Whether the user has access to this project
         The logic should mirror PublishedProjectManager#accessible_by,
