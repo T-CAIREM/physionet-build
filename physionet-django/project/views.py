@@ -1803,6 +1803,7 @@ def published_project(request, project_slug, version, subdir=''):
     has_passphrase = project.get_anonymous_url() == an_url
 
     has_access_to_project_and_files = project.has_access_to_project_and_files(user) or has_passphrase
+    has_access_to_project = project.has_access_to_project(user) or has_passphrase
     has_signed_dua = False if not user.is_authenticated else DUASignature.objects.filter(
         project=project,
         user=user
@@ -1835,6 +1836,7 @@ def published_project(request, project_slug, version, subdir=''):
         'topics': topics,
         'languages': languages,
         'contact': contact,
+        'has_access_to_project': has_access_to_project,
         'has_access_to_project_and_files': has_access_to_project_and_files,
         'has_signed_dua': has_signed_dua,
         'has_accepted_access_request': has_accepted_access_request,

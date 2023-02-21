@@ -347,7 +347,7 @@
       <!-- /.sidebar -->
     </div>
     <h2 id="files">Files</h2>
-    {% if project.has_access_to_project %}
+    {% if has_access_to_project %}
     {% if project.deprecated_files %}
       <div class="alert alert-danger col-md-8" role="alert">
         {% if project.is_latest_version %}
