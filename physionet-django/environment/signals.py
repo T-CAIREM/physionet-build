@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from django.dispatch import receiver
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -14,6 +16,7 @@ Training = apps.get_model("user", "Training")
 
 DataAccessRequest = apps.get_model("project", "DataAccessRequest")
 
+Event = apps.get_model("events", "Event")
 
 @receiver(post_init, sender=User)
 def memoize_original_credentialing_status(instance: User, **kwargs):
@@ -27,6 +30,17 @@ def schedule_stop_environments_if_credentialing_revoked(instance: User, **kwargs
 
     if not instance.is_credentialed and instance._original_is_credentialed:
         stop_environments_with_expired_access(instance.id)
+
+
+@receiver(post_save, sender=Event)
+def schedule_stop_environments_if_event_finished(instance: Event, **kwargs):
+
+    if datetime.now().date() < instance.end_date:
+        return
+
+    schedule = timezone.now() + datetime.timedelta(1)
+    for participant in instance.participants.all():
+        stop_environments_with_expired_access(participant.id, schedule=schedule)
 
 
 @receiver(post_init, sender=Training)
