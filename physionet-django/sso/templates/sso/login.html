@@ -4,6 +4,21 @@
 
 {% block title %}Login{% endblock %}
 
+{% block local_js_top %}
+<script src="https://service.seamlessaccess.org/thiss.js"></script>
+{% endblock %}
+
+{% block local_js_bottom %}
+<script>
+window.onload = function() {
+  // Render the SeamlessAccess button
+  thiss.DiscoveryComponent.render({
+    loginInitiatorURL: "https://dev.healthdatanexus.ai/Shibboleth.sso/Login?target=https://dev.healthdatanexus.ai/sso/login",
+  }, "#discovery-service-button");
+};
+</script>
+{% endblock %}
+
 {% block local_css %}
 <link rel="stylesheet" type="text/css" href="{% static 'custom/css/login-register.css' %}"/>
 {% endblock %}
@@ -14,9 +29,10 @@
       <div class="card-body">
         <h5 class="card-title">Single Sign-On</h5>
         <h6 class="card-subtitle mb-2 text-muted">Login through an external institute</h6>
-        <a type="button" class="btn btn-primary center" href="{% url 'sso_login' %}" aria-disabled="true">
-          {{ sso_login_button_text }}
-        </a>
+        <!-- <a type="button" class="btn btn-primary center" href="{% url 'sso_login' %}" aria-disabled="true">
+             {{ sso_login_button_text }}
+             </a> -->
+        <div id="discovery-service-button"></div>
       </div>
     </div>
   </div>
