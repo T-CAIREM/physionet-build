@@ -269,8 +269,8 @@ grpcio==1.51.1 ; python_version >= "3.9" and python_version < "4.0" \
     --hash=sha256:f1fec3abaf274cdb85bf3878167cfde5ad4a4d97c68421afda95174de85ba813 \
     --hash=sha256:f96ace1540223f26fbe7c4ebbf8a98e3929a6aa0290c8033d12526847b291c0f \
     --hash=sha256:fbdbe9a849854fe484c00823f45b7baab159bdd4a46075302281998cb8719df5
-hdn-research-environment==1.5.2 ; python_version >= "3.9" and python_version < "4.0" \
-    --hash=sha256:8d9c220b79d5944175f01c23faa5719d3c698b86cba0651927387cc45f5e0468
+hdn-research-environment==1.5.3 ; python_version >= "3.9" and python_version < "4.0" \
+    --hash=sha256:c062ce1562b5b7d276c4a99f23506cd43d14b630b7839c822c03837487eb17c6
 html2text==2018.1.9 ; python_version >= "3.9" and python_version < "4.0" \
     --hash=sha256:490db40fe5b2cd79c461cf56be4d39eb8ca68191ae41ba3ba79f6cb05b7dd662 \
     --hash=sha256:627514fb30e7566b37be6900df26c2c78a030cc9e6211bda604d8181233bcdd4
