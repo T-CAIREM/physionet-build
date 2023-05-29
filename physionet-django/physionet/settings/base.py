@@ -20,7 +20,10 @@ from decouple import config, UndefinedValueError
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
+# HACK: Use locally managed `environment` package for development
+import sys
+sys.path.insert(0, "/mnt/hdn-research-environment")
+import environment
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.11/howto/deployment/checklist/
 
@@ -577,12 +580,7 @@ if ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
     CLOUD_RESEARCH_ENVIRONMENTS_API_V1_URL = config('CLOUD_RESEARCH_ENVIRONMENTS_API_V1_URL')
     CLOUD_RESEARCH_ENVIRONMENTS_API_V1_JWT_AUDIENCE = config('CLOUD_RESEARCH_ENVIRONMENTS_API_V1_JWT_AUDIENCE')
 
-    CLOUD_RESEARCH_ENVIRONMENTS_API_V2_JWT_SERVICE_ACCOUNT_PATH = os.path.join(
-        BASE_DIR,
-        config('CLOUD_RESEARCH_ENVIRONMENTS_API_V2_JWT_SERVICE_ACCOUNT_PATH')
-    )
     CLOUD_RESEARCH_ENVIRONMENTS_API_V2_URL = config('CLOUD_RESEARCH_ENVIRONMENTS_API_V2_URL')
-    CLOUD_RESEARCH_ENVIRONMENTS_API_V2_JWT_AUDIENCE = config('CLOUD_RESEARCH_ENVIRONMENTS_API_V2_JWT_AUDIENCE')
     INSTALLED_APPS.append('environment.apps.EnvironmentConfig')
 
 
