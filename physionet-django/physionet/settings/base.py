@@ -33,6 +33,7 @@ SSO_REMOTE_USER_HEADER = config('SSO_REMOTE_USER_HEADER', default='HTTP_REMOTE_U
 SSO_LOGIN_BUTTON_TEXT = config('SSO_LOGIN_BUTTON_TEXT', default='Login')
 PRIVACY_POLICY_HTML = config('PRIVACY_POLICY_HTML', default=None)
 GCS_SIGNED_URL_LIFETIME_IN_MINUTES = config('GCS_SIGNED_URL_LIFETIME_IN_MINUTES', default=1440, cast=int)
+HIDE_ACCOUNT_CLOUD_TAB = config('HIDE_ACCOUNT_CLOUD_TAB', default=False, cast=bool)
 
 
 # Application definition
