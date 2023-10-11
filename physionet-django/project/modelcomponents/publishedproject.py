@@ -14,7 +14,6 @@ from project.modelcomponents.fields import SafeHTMLField
 from project.modelcomponents.metadata import Metadata, PublishedTopic
 from project.modelcomponents.submission import SubmissionInfo
 from project.models import AccessPolicy
-from project.projectfiles import ProjectFiles
 from project.utility import StorageInfo, clear_directory, get_tree_size
 from project.validators import MAX_PROJECT_SLUG_LENGTH, validate_slug, validate_subdir
 from user.models import Training
@@ -42,7 +41,10 @@ class PublishedProject(Metadata, SubmissionInfo):
     is_legacy = models.BooleanField(default=False)
     full_description = SafeHTMLField(default='')
 
+    # For ordering projects with multiple versions
+    version_order = models.PositiveSmallIntegerField(default=0)
     is_latest_version = models.BooleanField(default=True)
+
     # Featured content
     featured = models.PositiveSmallIntegerField(null=True)
     has_wfdb = models.BooleanField(default=False)
@@ -89,20 +91,20 @@ class PublishedProject(Metadata, SubmissionInfo):
         This is the parent directory of the main and special file
         directories.
         """
-        return ProjectFiles().get_project_file_root(self.slug, self.version, self.access_policy, PublishedProject)
+        return self.files.get_project_file_root(self.slug, self.version, self.access_policy, PublishedProject)
 
     def file_root(self):
         """
         Root directory where the main user uploaded files are located
         """
-        return ProjectFiles().get_file_root(self.slug, self.version, self.access_policy, PublishedProject)
+        return self.files.get_file_root(self.slug, self.version, self.access_policy, PublishedProject)
 
     def storage_used(self):
         """
         Bytes of storage used by main files and compressed file if any
         """
-        storage_used = ProjectFiles().published_project_storage_used(self)
-        zip_file_size = ProjectFiles().get_zip_file_size(self)
+        storage_used = self.files.published_project_storage_used(self)
+        zip_file_size = self.files.get_zip_file_size(self)
 
         return storage_used, zip_file_size
 
@@ -134,7 +136,7 @@ class PublishedProject(Metadata, SubmissionInfo):
         """
         Make a (new) zip file of the main files.
         """
-        return ProjectFiles().make_zip(project=self)
+        return self.files.make_zip(project=self)
 
     def remove_zip(self):
         fname = self.zip_name(full=True)
@@ -157,13 +159,13 @@ class PublishedProject(Metadata, SubmissionInfo):
         """
         Make the checksums file for the main files
         """
-        return ProjectFiles().make_checksum_file(self)
+        return self.files.make_checksum_file(self)
 
     def remove_files(self):
         """
         Remove files of this project
         """
-        ProjectFiles().rm_dir(self.file_root(), remove_zip=self.remove_zip)
+        self.files.rm_dir(self.file_root(), remove_zip=self.remove_zip)
         self.set_storage_info()
 
     def deprecate_files(self, delete_files):
@@ -205,49 +207,6 @@ class PublishedProject(Metadata, SubmissionInfo):
         """
         return reverse('display_published_project_file',
             args=(self.slug, self.version, os.path.join(subdir, file)))
-
-    def has_access(self, user):
-        """
-        Whether the user has access to this project
-        The logic should mirror PublishedProjectManager#accessible_by,
-        but for a specific project.
-        """
-        if self.deprecated_files:
-            return False
-
-        if not self.allow_file_downloads:
-            return False
-
-        if self.access_policy == AccessPolicy.OPEN:
-            return True
-        elif self.access_policy == AccessPolicy.RESTRICTED:
-            return user.is_authenticated and DUASignature.objects.filter(project=self, user=user).exists()
-        elif self.access_policy == AccessPolicy.CREDENTIALED:
-            return (
-                user.is_authenticated
-                and user.is_credentialed
-                and DUASignature.objects.filter(project=self, user=user).exists()
-                and Training.objects.get_valid()
-                .filter(training_type__in=self.required_trainings.all(), user=user)
-                .count()
-                == self.required_trainings.count()
-            )
-        elif self.access_policy == AccessPolicy.CONTRIBUTOR_REVIEW:
-            return (
-                user.is_authenticated
-                and user.is_credentialed
-                and DataAccessRequest.objects.get_active(
-                    project=self,
-                    requester=user,
-                    status=DataAccessRequest.ACCEPT_REQUEST_VALUE
-                ).exists()
-                and Training.objects.get_valid()
-                .filter(training_type__in=self.required_trainings.all(), user=user)
-                .count()
-                == self.required_trainings.count()
-            )
-
-        return False
 
     def can_approve_requests(self, user):
         """

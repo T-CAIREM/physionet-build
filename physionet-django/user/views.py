@@ -633,7 +633,8 @@ def edit_credentialing(request):
         ticket_system_url = None
 
     applications = CredentialApplication.objects.filter(user=request.user)
-    current_application = applications.filter(status=0).first()
+    current_application = applications.filter(status=CredentialApplication.Status.PENDING).first()
+    estimated_time = 'one week'
 
     if request.method == 'POST' and 'withdraw_credentialing' in request.POST:
         if current_application:
@@ -645,6 +646,7 @@ def edit_credentialing(request):
     return render(request, 'user/edit_credentialing.html', {
         'applications': applications,
         'pause_applications': pause_applications,
+        'estimated_time_for_credentialing': estimated_time,
         'pause_message': pause_message,
         'current_application': current_application,
         'ticket_system_url': ticket_system_url})
@@ -659,7 +661,7 @@ def user_credential_applications(request):
         user=request.user).order_by('-application_datetime')
 
     return render(request, 'user/user_credential_applications.html',
-        {'applications':applications})
+                  {'applications': applications, 'CredentialApplication': CredentialApplication})
 
 
 @login_required
@@ -669,7 +671,7 @@ def credential_application(request):
     """
     user = request.user
     if user.is_credentialed or CredentialApplication.objects.filter(
-            user=user, status=0):
+            user=user, status=CredentialApplication.Status.PENDING):
         return redirect('edit_credentialing')
 
     if settings.SYSTEM_MAINTENANCE_NO_UPLOAD:
@@ -721,46 +723,90 @@ def credential_application(request):
 @login_required
 def edit_training(request):
     """
-    Training settings page.
+    Trainings settings page.
     """
     if settings.TICKET_SYSTEM_URL:
         ticket_system_url = settings.TICKET_SYSTEM_URL
     else:
         ticket_system_url = None
 
-    if request.method == 'POST':
+    if request.method == "POST":
         training_form = forms.TrainingForm(
-            user=request.user, data=request.POST, files=request.FILES, training_type=request.POST.get('training_type')
+            user=request.user,
+            data=request.POST,
+            files=request.FILES,
+            training_type=request.POST.get("training_type"),
         )
         if training_form.is_valid():
             training_form.save()
-            messages.success(request, 'The training has been submitted successfully.')
+            messages.success(request, "The training has been submitted successfully.")
             training_application_request(request, training_form)
             training_form = forms.TrainingForm(user=request.user)
         else:
-            messages.error(request, 'Invalid submission. Check the errors below.')
+            messages.error(request, "Invalid submission. Check the errors below.")
 
     else:
-        training_type = request.GET.get('trainingType')
+        training_type = request.GET.get("trainingType")
         if training_type:
-            training_form = forms.TrainingForm(user=request.user, training_type=training_type)
+            training_form = forms.TrainingForm(
+                user=request.user, training_type=training_type
+            )
         else:
             training_form = forms.TrainingForm(user=request.user)
 
-    training = Training.objects.select_related('training_type').filter(user=request.user).order_by('-status')
+    return render(
+        request,
+        "user/edit_training.html",
+        {"training_form": training_form, "ticket_system_url": ticket_system_url},
+    )
+
+
+@login_required
+def edit_certification(request):
+    """
+    Certifications page.
+    """
+
+    if request.method == "POST":
+        training_form = forms.TrainingForm(
+            user=request.user,
+            data=request.POST,
+            files=request.FILES,
+            training_type=request.POST.get("training_type"),
+        )
+        if training_form.is_valid():
+            training_form.save()
+            messages.success(request, "The training has been submitted successfully.")
+            training_application_request(request, training_form)
+            training_form = forms.TrainingForm(user=request.user)
+        else:
+            messages.error(request, "Invalid submission. Check the errors below.")
+
+    else:
+        training_type = request.GET.get("trainingType")
+        if training_type:
+            training_form = forms.TrainingForm(
+                user=request.user, training_type=training_type
+            )
+        else:
+            training_form = forms.TrainingForm(user=request.user)
+
+    training = (
+        Training.objects.select_related("training_type")
+        .filter(user=request.user)
+        .order_by("-status")
+    )
     training_by_status = {
-        'under review': training.get_review(),
-        'active': training.get_valid(),
-        'expired': training.get_expired(),
-        'rejected': training.get_rejected(),
+        "under review": training.get_review(),
+        "active": training.get_valid(),
+        "expired": training.get_expired(),
+        "rejected": training.get_rejected(),
     }
 
     return render(
         request,
-        'user/edit_training.html',
-        {'training_form': training_form,
-         'training_by_status': training_by_status,
-         'ticket_system_url': ticket_system_url},
+        "user/edit_certification.html",
+        {"training_by_status": training_by_status},
     )
 
 
@@ -793,6 +839,7 @@ def training_report(request, training_id):
     return utility.serve_file(training.completion_report.path, attach=False)
 
 
+# TODO: remove this after 30 days of commit merge, we want let the old links that was sent to the referees work
 # @login_required
 def credential_reference(request, application_slug):
     """
@@ -824,6 +871,40 @@ def credential_reference(request, application_slug):
 
     return render(request, 'user/credential_reference.html',
         {'form': form, 'application': application})
+
+
+def credential_reference_verification(request, application_slug, verification_token):
+    """
+    Page for a reference to verify or reject a credential application. This is an updated version of
+    `credential_reference` that uses an additional verification token.
+    """
+    application = CredentialApplication.objects.filter(
+        slug=application_slug, reference_response_datetime=None, status=0,
+        reference_verification_token=verification_token)
+
+    if not application:
+        return redirect('/')
+    application = application.get()
+    form = forms.CredentialReferenceForm(instance=application)
+
+    if request.method == 'POST':
+        form = forms.CredentialReferenceForm(data=request.POST, instance=application)
+        if form.is_valid():
+            application = form.save()
+            # Automated email notifying that their reference has denied
+            # their application.
+            if application.reference_response == 1:
+                process_credential_complete(request, application,
+                                            include_comments=False)
+
+            response = 'verifying' if application.reference_response == 2 else 'denying'
+            return render(request, 'user/credential_reference_complete.html',
+                          {'response': response, 'application': application})
+        else:
+            messages.error(request, 'Invalid submission. See errors below.')
+
+    return render(request, 'user/credential_reference.html', {'form': form, 'application': application})
+
 
 @login_required
 def edit_cloud(request):

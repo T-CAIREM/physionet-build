@@ -1,8 +1,13 @@
+import functools
+
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from project.quota import DemoQuotaManager
 from django.conf import settings
+
+from physionet.settings.base import StorageTypes
+from project.projectfiles.gcs import GCSProjectFiles
+from project.projectfiles.local import LocalProjectFiles
 
 
 class EditLog(models.Model):
@@ -223,9 +228,6 @@ class SubmissionInfo(models.Model):
     copyedit_logs = GenericRelation('project.CopyeditLog')
     logs = GenericRelation('project.Log')
 
-    # For ordering projects with multiple versions
-    version_order = models.PositiveSmallIntegerField(default=0)
-
     # Anonymous access
     anonymous = GenericRelation('project.AnonymousAccess')
 
@@ -242,16 +244,21 @@ class SubmissionInfo(models.Model):
         (represented by the bytes_used and inodes_used properties of
         the QuotaManager object.)
         """
-        allowance = self.core_project.storage_allowance
-        published = self.core_project.total_published_size
-        limit = allowance - published
+        return self.files.project_quota_manager(self)
 
-        # DemoQuotaManager needs to know the project's toplevel
-        # directory as well as its creation time (so that files
-        # present in multiple versions can be correctly attributed to
-        # the version where they first appeared.)
-        quota_manager = DemoQuotaManager(
-            project_path=self.file_root(),
-            creation_time=self.creation_datetime)
-        quota_manager.set_limits(bytes_hard=limit, bytes_soft=limit)
-        return quota_manager
+    @functools.cached_property
+    def files(self):
+        """
+        Return a ProjectFiles instance for this project.
+
+        This object can be used to manipulate the project's files; see
+        project.projectfiles.base.BaseProjectFiles.
+
+        Currently there is only a single ProjectFiles implementation
+        per site, but in future each project may have its own storage
+        backend.
+        """
+        if settings.STORAGE_TYPE == StorageTypes.LOCAL:
+            return LocalProjectFiles()
+        elif settings.STORAGE_TYPE == StorageTypes.GCP:
+            return GCSProjectFiles()

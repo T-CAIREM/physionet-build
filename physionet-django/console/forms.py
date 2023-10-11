@@ -1,9 +1,4 @@
-import pdb
 import re
-
-from django.forms.widgets import RadioSelect
-
-from django.forms.widgets import RadioSelect
 
 from console.utility import generate_doi_payload, register_doi
 from dal import autocomplete
@@ -27,9 +22,10 @@ from project.models import (
     PublishedAffiliation,
     PublishedAuthor,
     PublishedProject,
+    PublishedPublication,
+    SubmissionStatus,
     exists_project_slug,
 )
-from project.projectfiles import ProjectFiles
 from project.validators import MAX_PROJECT_SLUG_LENGTH, validate_doi, validate_slug
 from user.models import CodeOfConduct, CredentialApplication, CredentialReview, User, TrainingQuestion
 
@@ -91,10 +87,12 @@ class AssignEditorForm(forms.Form):
                 .order_by('username')
 
     def clean_project(self):
-        pid = self.cleaned_data['project']
+        pid = self.cleaned_data["project"]
         validate_integer(pid)
-        if ActiveProject.objects.get(id=pid) not in ActiveProject.objects.filter(submission_status=10):
-            raise forms.ValidationError('Incorrect project selected.')
+        if ActiveProject.objects.get(id=pid) not in ActiveProject.objects.filter(
+            submission_status=SubmissionStatus.NEEDS_ASSIGNMENT
+        ):
+            raise forms.ValidationError("Incorrect project selected.")
         return pid
 
 
@@ -230,13 +228,13 @@ class EditSubmissionForm(forms.ModelForm):
                 edit_log = EditLog.objects.get(id=edit_log.id)
             # Resubmit with revisions
             elif edit_log.decision == 1:
-                project.submission_status = 30
+                project.submission_status = SubmissionStatus.NEEDS_RESUBMISSION
                 project.revision_request_datetime = now
                 project.latest_reminder = now
                 project.save()
             # Accept
             else:
-                project.submission_status = 40
+                project.submission_status = SubmissionStatus.NEEDS_COPYEDIT
                 project.editor_accept_datetime = now
                 project.latest_reminder = now
 
@@ -289,7 +287,7 @@ class CopyeditForm(forms.ModelForm):
             project = copyedit_log.project
             now = timezone.now()
             copyedit_log.complete_datetime = now
-            project.submission_status = 50
+            project.submission_status = SubmissionStatus.NEEDS_APPROVAL
             project.copyedit_completion_datetime = now
             project.latest_reminder = now
             copyedit_log.save()
@@ -310,12 +308,12 @@ class PublishForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.project = project
         # No option to set slug if publishing new version
-        if self.project.version_order:
+        if self.project.is_new_version:
             del(self.fields['slug'])
         else:
             self.fields['slug'].initial = project.slug
 
-        if not ProjectFiles().can_make_zip():
+        if not project.files.can_make_zip():
             self.fields['make_zip'].disabled = True
             self.fields['make_zip'].required = False
             self.fields['make_zip'].initial = 0
@@ -406,23 +404,24 @@ class ProcessCredentialForm(forms.ModelForm):
     def __init__(self, responder, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.responder = responder
-        self.fields['status'].choices = CredentialApplication.REJECT_ACCEPT_WITHDRAW[:3]
+        self.fields['status'].choices = CredentialApplication.Status.choices_process_application
 
     def clean(self):
         if self.errors:
             return
 
-        if self.cleaned_data['status'] == 1 and not self.cleaned_data['responder_comments']:
+        if (self.cleaned_data['status'] == CredentialApplication.Status.REJECTED
+                and not self.cleaned_data['responder_comments']):
             raise forms.ValidationError('If you reject, you must explain why.')
 
     def save(self):
         application = super().save()
 
-        if application.status == 1:
+        if application.status == CredentialApplication.Status.REJECTED:
             application.reject(self.responder)
-        elif application.status == 2:
+        elif application.status == CredentialApplication.Status.ACCEPTED:
             application.accept(self.responder)
-        elif application.status == 3:
+        elif application.status == CredentialApplication.Status.WITHDRAWN:
             application.withdraw(self.responder)
         else:
             raise forms.ValidationError('Application status not valid.')
@@ -449,23 +448,24 @@ class ProcessCredentialReviewForm(forms.ModelForm):
     def __init__(self, responder, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.responder = responder
-        self.fields['status'].choices = CredentialApplication.REJECT_ACCEPT_WITHDRAW[:3]
+        self.fields['status'].choices = CredentialApplication.Status.choices_process_application
 
     def clean(self):
         if self.errors:
             return
 
-        if self.cleaned_data['status'] == 1 and not self.cleaned_data['responder_comments']:
+        if (self.cleaned_data['status'] == CredentialApplication.Status.REJECTED
+                and not self.cleaned_data['responder_comments']):
             raise forms.ValidationError('If you reject, you must explain why.')
 
     def save(self):
         application = super().save()
 
-        if application.status == 1:
+        if application.status == CredentialApplication.Status.REJECTED:
             application.reject(self.responder)
-        elif application.status == 2:
+        elif application.status == CredentialApplication.Status.ACCEPTED:
             application.accept(self.responder)
-        elif application.status == 3:
+        elif application.status == CredentialApplication.Status.WITHDRAWN:
             application.withdraw(self.responder)
         else:
             raise forms.ValidationError('Application status not valid.')
@@ -703,6 +703,32 @@ class PublishedProjectContactForm(forms.ModelForm):
         return contact
 
 
+class AddPublishedPublicationForm(forms.ModelForm):
+    class Meta:
+        model = PublishedPublication
+        fields = ('citation', 'url')
+
+    def __init__(self, project, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.project = project
+
+    def clean(self):
+        cleaned_data = super().clean()
+        existing_publication = PublishedPublication.objects.filter(project=self.project).first()
+
+        if existing_publication:
+            raise forms.ValidationError("A publication already exists for this project.")
+
+        return cleaned_data
+
+    def save(self, commit=True):
+        publication = super().save(commit=False)
+        publication.project = self.project
+        if commit:
+            publication.save()
+        return publication
+
+
 class CreateLegacyAuthorForm(forms.ModelForm):
     """
     Create an author for a legacy project.
@@ -820,7 +846,8 @@ class StaticPageForm(forms.ModelForm):
 
     def save(self):
         static_page = super().save(commit=False)
-        static_page.nav_order = StaticPage.objects.count() + 1
+        if not self.initial:
+            static_page.nav_order = StaticPage.objects.count() + 1
         static_page.save()
         return static_page
 

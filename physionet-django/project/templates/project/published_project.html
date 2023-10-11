@@ -280,9 +280,16 @@
           <h5 class="card-header">Discovery</h5>
           <div class="card-body">
             {% if project.doi %}
-              <p><strong>DOI:</strong>
+              <p><strong>DOI (version {{ project.version }}):</strong>
                 <br>
                 <a href="https://doi.org/{{ project.doi }}">https://doi.org/{{ project.doi }}</a>
+              </p>
+            {% endif %}
+
+            {% if project.core_project.doi %}
+              <p><strong>DOI (latest version):</strong>
+                <br>
+                <a href="https://doi.org/{{ project.core_project.doi }}">https://doi.org/{{ project.core_project.doi }}</a>
               </p>
             {% endif %}
 
@@ -347,7 +354,6 @@
       <!-- /.sidebar -->
     </div>
     <h2 id="files">Files</h2>
-    {% if project.allow_file_downloads %}
     {% if project.deprecated_files %}
       <div class="alert alert-danger col-md-8" role="alert">
         {% if project.is_latest_version %}
@@ -364,7 +370,8 @@
         The files in this project version are under embargo until: {{ project.embargo_end_date|date }}
       </div>
     {% else %}
-      {% if has_access %}
+      {% if is_authorized %}
+        {% if project.allow_file_downloads %}
         {#  refactored code goes here            #}
         <p>Total uncompressed size: {{ main_size }}.</p>
         {# ZIP START #}
@@ -438,12 +445,12 @@
           {% include "project/files_panel.html" %}
         </div>
       {% else %}
-        {% include "project/published_project_unauthorized.html" %}
+        {% include "project/published_project_denied_downloads.html" %}
       {% endif %}
 
-    {% endif %}
-    {% else %}
-    {% include "project/published_project_denied_downloads.html" %}
+      {% else %}
+        {% include "project/published_project_unauthorized.html" %}
+      {% endif %}
     {% endif %}
     <br>
     {% if accepted_access_requests %}

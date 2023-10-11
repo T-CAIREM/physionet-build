@@ -22,7 +22,7 @@
         <a class="nav-link {% if passphrase %} active {% endif %}" id="embargo-tab" data-toggle="tab" href="#embargo" role="tab" aria-controls="reassign" aria-selected="false">Embargo</a>
       </li>
       {% endif %}
-      {% if project.submission_status >= 40 %}
+      {% if project.submission_status >= SubmissionStatus.NEEDS_COPYEDIT %}
       <li class="nav-item">
         <a class="nav-link" id="doi-tab" data-toggle="tab" href="#doi" role="tab" aria-controls="timeline" aria-selected="false">DOIs</a>
       </li>
@@ -40,7 +40,7 @@
           Created: {{ project.creation_datetime|date }}. Submitted: {{ project.submission_datetime|date }}.<br>
           Storage Used: {{ storage_info.readable_used }} / {{ storage_info.readable_allowance }}<br>
           Version: {{ project.version }}
-          {% if project.version_order %}<br>Latest Published Version: <a href="{% url 'published_project' latest_version.slug latest_version.version %}" target="_blank">{{ latest_version.version }}</a>{% endif %}
+          {% if project.is_new_version %}<br>Latest Published Version: <a href="{% url 'published_project' latest_version.slug latest_version.version %}" target="_blank">{{ latest_version.version }}</a>{% endif %}
           {% if project.latest_reminder %}
             <br>Latest reminder email sent on: {{ project.latest_reminder }}
           {% endif %}

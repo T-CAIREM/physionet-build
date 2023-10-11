@@ -14,7 +14,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    container: debian:11
+    container: ${{ matrix.container }}
     env:
       DJANGO_SETTINGS_MODULE: physionet.settings.settings
       TEST_GCS_INTEGRATION: false
@@ -26,6 +26,7 @@ jobs:
       fail-fast: false
       matrix:
         pip3: ['poetry', 'requirements.txt']
+        container: ['debian:11', 'debian:12']
     steps:
 
       - name: Update packages
@@ -37,6 +38,7 @@ jobs:
                   build-essential \
                   flake8 \
                   git \
+                  libcap-dev \
                   libffi-dev \
                   libflac-dev \
                   libpq-dev \
@@ -50,7 +52,7 @@ jobs:
 
       # Note: run checkout after updating git
       - name: Checkout physionet-build repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
@@ -76,6 +78,7 @@ jobs:
           else
             pip3 install -r requirements.txt
           fi
+          pip3 freeze
 
       - name: Setup postgres
         run: |
@@ -94,7 +97,7 @@ jobs:
 
       - name: Install and setup lightwave
         run: |
-          wget https://github.com/bemoody/lightwave/archive/0.71.tar.gz -O lightwave.tar.gz
+          wget https://github.com/bemoody/lightwave/archive/0.72.tar.gz -O lightwave.tar.gz
           tar -xf lightwave.tar.gz
           (cd lightwave-* && make CGIDIR=/usr/local/bin sandboxed-server)
 

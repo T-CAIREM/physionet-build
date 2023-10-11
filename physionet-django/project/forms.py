@@ -40,7 +40,6 @@ from project.models import (
     exists_project_slug,
     UploadedDocument,
 )
-from project.projectfiles import ProjectFiles
 from user.models import User, TrainingType
 from user.validators import validate_affiliation
 
@@ -101,13 +100,42 @@ class ActiveProjectFilesForm(forms.Form):
         return data
 
 
+class MultipleFileInput(forms.ClearableFileInput):
+    """
+    Variant of ClearableFileInput that allows uploading multiple
+    files in a single form field.
+    """
+    allow_multiple_selected = True
+
+    def __init__(self, attrs={}):
+        super().__init__(attrs={'multiple': True, **attrs})
+
+
+class MultipleFileField(forms.FileField):
+    """
+    Variant of FileField that allows uploading multiple files in a
+    single form field.
+    """
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("widget", MultipleFileInput())
+        super().__init__(*args, **kwargs)
+
+    def clean(self, data, initial=None):
+        single_file_clean = super().clean
+        if isinstance(data, (list, tuple)):
+            result = [single_file_clean(d, initial) for d in data]
+        else:
+            result = single_file_clean(data, initial)
+        return result
+
+
 class UploadFilesForm(ActiveProjectFilesForm):
     """
     Form for uploading multiple files to a project.
     `subdir` is the project subdirectory relative to the file root.
     """
-    file_field = forms.FileField(widget=forms.ClearableFileInput(
-        attrs={'multiple': True, 'onchange': "check_upload_size_limit('upload');"}), required=False,
+    file_field = MultipleFileField(widget=MultipleFileInput(
+        attrs={'onchange': "check_upload_size_limit('upload');"}), required=False,
         allow_empty_file=True)
 
     def clean_file_field(self):
@@ -147,7 +175,7 @@ class UploadFilesForm(ActiveProjectFilesForm):
         errors = ErrorList()
         for file in self.files.getlist('file_field'):
             try:
-                ProjectFiles().fput(self.file_dir, file)
+                self.project.files.fput(self.file_dir, file)
             except FileExistsError:
                 errors.append(format_html(
                     'Item named <i>{}</i> already exists', file.name))
@@ -173,7 +201,7 @@ class CreateFolderForm(ActiveProjectFilesForm):
 
         file_path = os.path.join(self.file_dir, name)
         try:
-            ProjectFiles().mkdir(file_path)
+            self.project.files.mkdir(file_path)
         except FileExistsError:
             errors.append(format_html(
                 'Item named <i>{}</i> already exists', name))
@@ -209,7 +237,7 @@ class DeleteItemsForm(EditItemsForm):
         for item in self.cleaned_data['items']:
             path = os.path.join(self.file_dir, item)
             try:
-                ProjectFiles().rm(path)
+                self.project.files.rm(path)
             except OSError as e:
                 if not os.path.exists(path):
                     errors.append(format_html(
@@ -245,7 +273,7 @@ class RenameItemForm(EditItemsForm):
         old_path = os.path.join(self.file_dir, old_name)
         new_path = os.path.join(self.file_dir, new_name)
         try:
-            ProjectFiles().rename(old_path, new_path)
+            self.project.files.rename(old_path, new_path)
         except FileExistsError:
             errors.append(format_html(
                 'Item named <i>{}</i> already exists', new_name))
@@ -320,7 +348,7 @@ class MoveItemsForm(EditItemsForm):
         for item in self.cleaned_data['items']:
             path = os.path.join(self.file_dir, item)
             try:
-                ProjectFiles().mv(path, self.dest_dir)
+                self.project.files.mv(path, self.dest_dir)
             except FileExistsError:
                 errors.append(format_html(
                     'Item named <i>{}</i> already exists in <i>{}</i>',
@@ -363,7 +391,7 @@ class CreateProjectForm(forms.ModelForm):
             is_submitting=True, is_corresponding=True)
         author.import_profile_info()
         # Create file directory
-        ProjectFiles().mkdir(project.file_root())
+        project.files.mkdir(project.file_root())
         return project
 
 
@@ -401,12 +429,11 @@ class NewProjectVersionForm(forms.ModelForm):
 
         # Direct copy over fields
         for field in (field.name for field in Metadata._meta.fields):
-            if field not in ['slug', 'version', 'creation_datetime']:
+            if field not in ['slug', 'version', 'creation_datetime', 'embargo_files_days']:
                 setattr(project, field, getattr(self.latest_project, field))
 
         # Set new fields
         project.creation_datetime = timezone.now()
-        project.version_order = self.latest_project.version_order + 1
         project.is_new_version = True
 
         # Change internal links (that point to files within the
@@ -478,7 +505,9 @@ class NewProjectVersionForm(forms.ModelForm):
         ignored_files = ('SHA256SUMS.txt', 'LICENSE.txt')
 
         if settings.COPY_FILES_TO_NEW_VERSION:
-            ProjectFiles().cp_dir(older_file_root, current_file_root, ignored_files=ignored_files)
+            # NOTE: This assumes the new active project is using the
+            # same storage backend as the existing published project.
+            project.files.cp_dir(older_file_root, current_file_root, ignored_files=ignored_files)
 
         return project
 
@@ -638,7 +667,7 @@ class AffiliationFormSet(forms.BaseInlineFormSet):
     """
     form_name = 'affiliations'
     item_label = 'Affiliations'
-    max_forms = 3
+    max_forms = Affiliation.MAX_AFFILIATIONS
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -840,11 +869,13 @@ class AccessMetadataForm(forms.ModelForm):
             self.fields['required_trainings'].disabled = True
             self.fields['required_trainings'].required = False
             self.fields['required_trainings'].widget = forms.HiddenInput()
+            self.initial['required_trainings'] = ''
 
         if self.access_policy == AccessPolicy.OPEN:
             self.fields['dua'].disabled = True
             self.fields['dua'].required = False
             self.fields['dua'].widget = forms.HiddenInput()
+            self.initial['dua'] = ''
 
         if not self.editable:
             for field in self.fields.values():

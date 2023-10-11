@@ -1,6 +1,7 @@
 import csv
 import logging
 import os
+import re
 from collections import OrderedDict
 from datetime import datetime
 from itertools import chain
@@ -16,6 +17,7 @@ from django.contrib.auth.decorators import login_required, user_passes_test, per
 from django.contrib.auth.models import Group
 from django.contrib.contenttypes.forms import generic_inlineformset_factory
 from django.contrib.contenttypes.models import ContentType
+from django.contrib.redirects.models import Redirect
 from django.db.models import Count, DurationField, F, Q
 from django.db.models.functions import Cast
 from django.forms import Select, Textarea, modelformset_factory
@@ -50,10 +52,11 @@ from project.models import (
     PublishedProject,
     Reference,
     StorageRequest,
+    SubmissionStatus,
     Topic,
     exists_project_slug,
 )
-from project.projectfiles import ProjectFiles
+from project.authorization.access import can_view_project_files
 from project.utility import readable_size
 from project.validators import MAX_PROJECT_SLUG_LENGTH
 from project.views import get_file_forms, get_project_file_info, process_files_post
@@ -66,7 +69,8 @@ from user.models import (
     Training,
     TrainingType,
     TrainingQuestion,
-    CodeOfConduct
+    CodeOfConduct,
+    CloudInformation
 )
 from physionet.enums import LogCategory
 from console import forms, utility, services
@@ -143,21 +147,21 @@ def submitted_projects(request):
             messages.success(request, 'The editor has been assigned')
 
     # Submitted projects
-    projects = ActiveProject.objects.filter(submission_status__gt=0).order_by(
+    projects = ActiveProject.objects.filter(submission_status__gt=SubmissionStatus.UNSUBMITTED).order_by(
         'submission_datetime')
     # Separate projects by submission status
     # Awaiting editor assignment
-    assignment_projects = projects.filter(submission_status=10)
+    assignment_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_ASSIGNMENT)
     # Awaiting editor decision
-    decision_projects = projects.filter(submission_status=20)
+    decision_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_DECISION)
     # Awaiting author revisions
-    revision_projects = projects.filter(submission_status=30)
+    revision_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_RESUBMISSION)
     # Awaiting editor copyedit
-    copyedit_projects = projects.filter(submission_status=40)
+    copyedit_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_COPYEDIT)
     # Awaiting author approval
-    approval_projects = projects.filter(submission_status=50)
+    approval_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_APPROVAL)
     # Awaiting editor publish
-    publish_projects = projects.filter(submission_status=60)
+    publish_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_PUBLICATION)
 
     assign_editor_form = forms.AssignEditorForm()
 
@@ -205,15 +209,15 @@ def editor_home(request):
         'submission_datetime')
 
     # Awaiting editor decision
-    decision_projects = projects.filter(submission_status=20)
+    decision_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_DECISION)
     # Awaiting author revisions
-    revision_projects = projects.filter(submission_status=30)
+    revision_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_RESUBMISSION)
     # Awaiting editor copyedit
-    copyedit_projects = projects.filter(submission_status=40)
+    copyedit_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_COPYEDIT)
     # Awaiting author approval
-    approval_projects = projects.filter(submission_status=50)
+    approval_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_APPROVAL)
     # Awaiting editor publish
-    publish_projects = projects.filter(submission_status=60)
+    publish_projects = projects.filter(submission_status=SubmissionStatus.NEEDS_PUBLICATION)
 
     # Time to check if the reminder email can be sent
     yesterday = timezone.now() + timezone.timedelta(days=-1)
@@ -316,7 +320,7 @@ def edit_submission(request, project_slug, *args, **kwargs):
     embargo_form = forms.EmbargoFilesDaysForm()
 
     # The user must be the editor
-    if project.submission_status not in [20, 30]:
+    if project.submission_status not in [SubmissionStatus.NEEDS_DECISION, SubmissionStatus.NEEDS_RESUBMISSION]:
         return redirect('editor_home')
 
     if request.method == 'POST':
@@ -361,7 +365,7 @@ def copyedit_submission(request, project_slug, *args, **kwargs):
     Page to copyedit the submission
     """
     project = kwargs['project']
-    if project.submission_status != 40:
+    if project.submission_status != SubmissionStatus.NEEDS_COPYEDIT:
         return redirect('editor_home')
 
     copyedit_log = project.copyedit_logs.get(complete_datetime=None)
@@ -547,7 +551,7 @@ def awaiting_authors(request, project_slug, *args, **kwargs):
     """
     project = kwargs['project']
 
-    if project.submission_status != 50:
+    if project.submission_status != SubmissionStatus.NEEDS_APPROVAL:
         return redirect('editor_home')
 
     authors, author_emails, storage_info, edit_logs, copyedit_logs, latest_version = project.info_card()
@@ -609,7 +613,7 @@ def publish_submission(request, project_slug, *args, **kwargs):
     """
     project = kwargs['project']
 
-    if project.submission_status != 60:
+    if project.submission_status != SubmissionStatus.NEEDS_PUBLICATION:
         return redirect('editor_home')
     if settings.SYSTEM_MAINTENANCE_NO_UPLOAD:
         raise ServiceUnavailable()
@@ -620,7 +624,7 @@ def publish_submission(request, project_slug, *args, **kwargs):
     if request.method == 'POST':
         publish_form = forms.PublishForm(project=project, data=request.POST)
         if project.is_publishable() and publish_form.is_valid():
-            if project.version_order:
+            if project.is_new_version:
                 slug = project.get_previous_slug()
             else:
                 slug = publish_form.cleaned_data['slug']
@@ -723,7 +727,7 @@ def unsubmitted_projects(request):
     """
     List of unsubmitted projects
     """
-    projects = ActiveProject.objects.filter(submission_status=0).order_by(
+    projects = ActiveProject.objects.filter(submission_status=SubmissionStatus.UNSUBMITTED).order_by(
         'creation_datetime')
     projects = paginate(request, projects, 50)
     return render(request, 'console/unsubmitted_projects.html',
@@ -829,6 +833,7 @@ def manage_published_project(request, project_slug, version):
     contact_form = forms.PublishedProjectContactForm(project=project,
                                                      instance=project.contact)
     legacy_author_form = forms.CreateLegacyAuthorForm(project=project)
+    publication_form = forms.AddPublishedPublicationForm(project=project)
 
     if request.method == 'POST':
         if any(x in request.POST for x in ['create_doi_core',
@@ -910,6 +915,12 @@ def manage_published_project(request, project_slug, version):
             if contact_form.is_valid():
                 contact_form.save()
                 messages.success(request, 'The contact information has been updated')
+        elif 'set_publication' in request.POST:
+            publication_form = forms.AddPublishedPublicationForm(
+                project=project, data=request.POST)
+            if publication_form.is_valid():
+                publication_form.save()
+                messages.success(request, 'The associated publication has been added')
         elif 'set_legacy_author' in request.POST:
             legacy_author_form = forms.CreateLegacyAuthorForm(project=project,
                                                               data=request.POST)
@@ -953,8 +964,9 @@ def manage_published_project(request, project_slug, version):
             'bulk_url_prefix': bulk_url_prefix,
             'contact_form': contact_form,
             'legacy_author_form': legacy_author_form,
-            'can_make_zip': ProjectFiles().can_make_zip(),
-            'can_make_checksum': ProjectFiles().can_make_checksum(),
+            'publication_form': publication_form,
+            'can_make_zip': project.files.can_make_zip(),
+            'can_make_checksum': project.files.can_make_checksum(),
         },
     )
 
@@ -1002,14 +1014,14 @@ def gcp_bucket_management(request, project, user):
 
 
 @permission_required('project.change_archivedproject', raise_exception=True)
-def rejected_submissions(request):
+def archived_submissions(request):
     """
-    List of rejected submissions
+    List of archived submissions
     """
-    projects = ArchivedProject.objects.filter(archive_reason=3).order_by('archive_datetime')
+    projects = ArchivedProject.objects.all().order_by('archive_datetime')
     projects = paginate(request, projects, 50)
-    return render(request, 'console/rejected_submissions.html',
-                  {'projects': projects, 'rejected_projects_nav': True})
+    return render(request, 'console/archived_submissions.html',
+                  {'projects': projects, 'archived_projects_nav': True})
 
 
 @permission_required('user.view_user', raise_exception=True)
@@ -1069,6 +1081,14 @@ def user_management(request, username):
     Admin page for managing an individual user account.
     """
     user = get_object_or_404(User, username__iexact=username)
+    try:
+        aws_info = CloudInformation.objects.get(user=user).aws_id
+    except CloudInformation.DoesNotExist:
+        aws_info = None
+    try:
+        gcp_info = CloudInformation.objects.get(user=user).gcp_email
+    except CloudInformation.DoesNotExist:
+        gcp_info = None
 
     _training = Training.objects.select_related('training_type').filter(user=user).order_by('-status')
 
@@ -1089,10 +1109,12 @@ def user_management(request, username):
                                                           is_verified=False)
 
     projects = {}
-    projects['Unsubmitted'] = ActiveProject.objects.filter(authors__user=user,
-                                                           submission_status=0).order_by('-creation_datetime')
-    projects['Submitted'] = ActiveProject.objects.filter(authors__user=user,
-                                                         submission_status__gt=0).order_by('-submission_datetime')
+    projects["Unsubmitted"] = ActiveProject.objects.filter(
+        authors__user=user, submission_status=SubmissionStatus.UNSUBMITTED
+    ).order_by("-creation_datetime")
+    projects["Submitted"] = ActiveProject.objects.filter(
+        authors__user=user, submission_status__gt=SubmissionStatus.UNSUBMITTED
+    ).order_by("-submission_datetime")
     projects['Archived'] = ArchivedProject.objects.filter(authors__user=user).order_by('-archive_datetime')
     projects['Published'] = PublishedProject.objects.filter(authors__user=user).order_by('-publish_datetime')
 
@@ -1106,7 +1128,9 @@ def user_management(request, username):
                                                             'emails': emails,
                                                             'projects': projects,
                                                             'training_list': training,
-                                                            'credentialing_app': credentialing_app})
+                                                            'credentialing_app': credentialing_app,
+                                                            'aws_info': aws_info,
+                                                            'gcp_info': gcp_info})
 
 
 @permission_required('user.view_user', raise_exception=True)
@@ -1124,7 +1148,10 @@ def users_search(request, group):
 
         users = User.objects.filter(Q(username__icontains=search_field)
                                     | Q(profile__first_names__icontains=search_field)
-                                    | Q(email__icontains=search_field))
+                                    | Q(profile__last_name__icontains=search_field)
+                                    | Q(email__icontains=search_field)
+                                    | Q(associated_emails__email__icontains=search_field)
+                                    ).distinct()
 
         if 'inactive' in group:
             users = users.filter(is_active=False)
@@ -1151,15 +1178,13 @@ def users_aws_access_list_json(request):
     2022).  Don't rely on this function; it will go away.
     """
     projects_datathon = [
-        "mimiciv-0.3",
-        "mimiciv-0.4",
-        "mimiciv-1.0",
-        "mimiciv-2.0"
+        "mimiciv-2.2"
     ]
     published_projects = PublishedProject.objects.all()
     users_with_awsid = User.objects.filter(cloud_information__aws_id__isnull=False)
     datasets = {}
     datasets['datasets'] = []
+    aws_id_pattern = r"\b\d{12}\b"
 
     for project in published_projects:
         dataset = {}
@@ -1168,8 +1193,9 @@ def users_aws_access_list_json(request):
             dataset['name'] = project_name
             dataset['accounts'] = []
             for user in users_with_awsid:
-                if project.has_access(user):
-                    dataset['accounts'].append(user.cloud_information.aws_id)
+                if can_view_project_files(project, user):
+                    if re.search(aws_id_pattern, user.cloud_information.aws_id):
+                        dataset['accounts'].append(user.cloud_information.aws_id)
             datasets['datasets'].append(dataset)
 
     return JsonResponse(datasets)
@@ -1226,8 +1252,8 @@ def process_credential_application(request, application_slug):
     contact reference, and make final decision.
     """
     try:
-        application = CredentialApplication.objects.get(slug=application_slug,
-                                                        status=0)
+        application = CredentialApplication.objects.get(
+            slug=application_slug, status=CredentialApplication.Status.PENDING)
         # create the review object if it does not exist
         CredentialReview.objects.get_or_create(application=application)
     except CredentialApplication.DoesNotExist:
@@ -1340,7 +1366,7 @@ def process_credential_application(request, application_slug):
                     notification.process_credential_complete(request,
                                                              application)
                     return render(request, 'console/process_credential_complete.html',
-                                  {'application': application})
+                                  {'application': application, 'CredentialApplication': CredentialApplication})
                 page_title = title_dict[application.credential_review.status]
                 intermediate_credential_form = forms.ProcessCredentialReviewForm(
                     responder=request.user, instance=application)
@@ -1370,7 +1396,8 @@ def credential_processing(request):
     """
     Process applications for credentialed access.
     """
-    applications = CredentialApplication.objects.filter(status=0).select_related('user__profile')
+    applications = CredentialApplication.objects.filter(
+        status=CredentialApplication.Status.PENDING).select_related('user__profile')
 
     # Allow filtering by event.
     if 'event' in request.GET:
@@ -1432,7 +1459,7 @@ def view_credential_application(request, application_slug):
 
     return render(request, 'console/view_credential_application.html',
                   {'application': application, 'app_user': application.user,
-                   'form': form, 'past_credentials_nav': True})
+                   'form': form, 'past_credentials_nav': True, 'CredentialApplication': CredentialApplication})
 
 
 @permission_required('user.change_credentialapplication', raise_exception=True)
@@ -1459,7 +1486,7 @@ def credential_applications(request, status):
             c_application = CredentialApplication.objects.filter(id=cid)
             if c_application:
                 c_application = c_application.get()
-                c_application.status = 0
+                c_application.status = CredentialApplication.Status.PENDING
                 c_application.save()
         elif "search" in request.POST:
             (all_successful_apps, unsuccessful_apps,
@@ -1485,16 +1512,19 @@ def credential_applications(request, status):
                    .order_by('-migration_date')
                    .select_related('migrated_user__profile'))
 
-    successful_apps = (CredentialApplication.objects.filter(status=2
-                                                            ).
+    successful_apps = (CredentialApplication.objects.filter(
+        status=CredentialApplication.Status.ACCEPTED).
                        order_by('-decision_datetime')
                        .select_related('user__profile', 'responder__profile'))
 
     unsuccessful_apps = CredentialApplication.objects.filter(
-        status__in=[1, 3, 4]).order_by('-decision_datetime').select_related('user__profile', 'responder')
+        status__in=[CredentialApplication.Status.REJECTED,
+                    CredentialApplication.Status.WITHDRAWN,
+                    CredentialApplication.Status.REVOKED]
+    ).order_by('-decision_datetime').select_related('user__profile', 'responder')
 
-    pending_apps = (CredentialApplication.objects.filter(status=0
-                                                         )
+    pending_apps = (CredentialApplication.objects.filter(
+        status=CredentialApplication.Status.PENDING)
                     .order_by('-application_datetime')
                     .select_related('user__profile', 'credential_review'))
 
@@ -1521,6 +1551,10 @@ def search_credential_applications(request):
     """
     if request.POST:
         search_field = request.POST['search']
+        pending_status = CredentialApplication.Status.PENDING
+        accepted_status = CredentialApplication.Status.ACCEPTED
+        rejected_status = CredentialApplication.Status.REJECTED
+        withdrawn_status = CredentialApplication.Status.WITHDRAWN
 
         legacy_apps = (LegacyCredential.objects.filter(
             Q(migrated=True)
@@ -1531,20 +1565,20 @@ def search_credential_applications(request):
                | Q(migrated_user__email__icontains=search_field))).order_by('-migration_date'))
 
         successful_apps = CredentialApplication.objects.filter(
-            Q(status=2) & (Q(user__username__icontains=search_field) |
-                           Q(user__profile__first_names__icontains=search_field)
+            Q(status=accepted_status) & (Q(user__username__icontains=search_field)
+                                         | Q(user__profile__first_names__icontains=search_field)
                            | Q(user__profile__last_name__icontains=search_field)
                            | Q(user__email__icontains=search_field))).order_by('-application_datetime')
 
         unsuccessful_apps = CredentialApplication.objects.filter(
-            Q(status__in=[1, 3]) & (Q(user__username__icontains=search_field) |
-                                    Q(user__profile__first_names__icontains=search_field)
+            Q(status__in=[rejected_status, withdrawn_status])
+            & (Q(user__username__icontains=search_field) | Q(user__profile__first_names__icontains=search_field)
                                     | Q(user__profile__last_name__icontains=search_field)
                                     | Q(user__email__icontains=search_field))).order_by('-application_datetime')
 
         pending_apps = CredentialApplication.objects.filter(
-            Q(status=0) & (Q(user__username__icontains=search_field) |
-                           Q(user__profile__first_names__icontains=search_field)
+            Q(status=pending_status) & (Q(user__username__icontains=search_field)
+                                        | Q(user__profile__first_names__icontains=search_field)
                            | Q(user__profile__last_name__icontains=search_field)
                            | Q(user__email__icontains=search_field))).order_by('-application_datetime')
 
@@ -1563,10 +1597,12 @@ def search_credential_applications(request):
 def credentialed_user_info(request, username):
     try:
         c_user = User.objects.get(username__iexact=username)
-        application = CredentialApplication.objects.get(user=c_user, status=2)
+        application = CredentialApplication.objects.get(
+            user=c_user, status=CredentialApplication.Status.ACCEPTED)
     except (User.DoesNotExist, CredentialApplication.DoesNotExist):
         raise Http404()
-    return render(request, 'console/credentialed_user_info.html', {'c_user': c_user, 'application': application})
+    return render(request, 'console/credentialed_user_info.html', {'c_user': c_user, 'application': application,
+                                                                   'CredentialApplication': CredentialApplication})
 
 
 @permission_required('user.can_review_training', raise_exception=True)
@@ -1952,8 +1988,8 @@ def credentialing_stats(request):
     for y in stats:
         # accepted = 2. rejected = 1.
         acc_and_rej = apps.filter(application_datetime__year=y)
-        a = acc_and_rej.filter(status=2).count()
-        r = acc_and_rej.filter(status=1).count()
+        a = acc_and_rej.filter(status=CredentialApplication.Status.ACCEPTED).count()
+        r = acc_and_rej.filter(status=CredentialApplication.Status.REJECTED).count()
         stats[y]['processed'] = a + r
         stats[y]['approved'] = round((100 * a) / (a + r))
 
@@ -2448,6 +2484,18 @@ def known_references(request):
         'all_known_ref': all_known_ref, 'known_ref_nav': True})
 
 
+@permission_required('physionet.view_redirect', raise_exception=True)
+def view_redirects(request):
+    """
+    Display a list of redirected URLs.
+    """
+    redirects = Redirect.objects.all().order_by("old_path")
+    return render(
+        request,
+        'console/redirects.html',
+        {'redirects': redirects, 'redirects_nav': True})
+
+
 @permission_required('physionet.change_frontpagebutton', raise_exception=True)
 def frontpage_buttons(request):
 
@@ -2898,16 +2946,30 @@ def code_of_conduct_activate(request, pk):
 
 
 @permission_required('user.view_all_events', raise_exception=True)
-def event(request):
+def event_active(request):
     """
     List of events
     """
-    events = Event.objects.all()
-    events = paginate(request, events, 50)
+    event_active = Event.objects.filter(end_date__gte=timezone.now())
+    event_active = paginate(request, event_active, 50)
 
-    return render(request, 'console/event.html',
-                  {'events': events,
-                   'events_nav': True
+    return render(request, 'console/event_active.html',
+                  {'event_active': event_active,
+                   'nav_event_active': True
+                   })
+
+
+@permission_required('user.view_all_events', raise_exception=True)
+def event_archive(request):
+    """
+    List of archived events
+    """
+    event_archive = Event.objects.filter(end_date__lte=timezone.now())
+    event_archive = paginate(request, event_archive, 50)
+
+    return render(request, 'console/event_archive.html',
+                  {'event_archive': event_archive,
+                   'nav_event_archive': True
                    })
 
 

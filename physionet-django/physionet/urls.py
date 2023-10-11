@@ -9,7 +9,6 @@ from django.http import HttpResponse
 from django.urls import path
 from physionet import views
 from physionet.settings.base import StorageTypes
-from project.projectfiles import ProjectFiles
 
 from export.views import database_list
 
@@ -35,6 +34,8 @@ urlpatterns = [
     path('', include('search.urls')),
     # export app
     path('api/', include('export.urls')),
+    # oauth app
+    path('oauth/', include('oauth.urls')),
 
     path('', views.home, name='home'),
     path('ping/', views.ping),
@@ -83,7 +84,7 @@ urlpatterns = [
          name='database_list')
 ]
 
-if settings.ENABLE_LIGHTWAVE and ProjectFiles().is_lightwave_supported:
+if settings.ENABLE_LIGHTWAVE:
     urlpatterns.append(path('lightwave/', include('lightwave.urls')))
     # backward compatibility for LightWAVE
     urlpatterns.append(path('cgi-bin/lightwave',

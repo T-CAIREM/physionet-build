@@ -13,8 +13,7 @@ urlpatterns = [
         name='submitted_projects'),
     path('published-projects/', views.published_projects,
         name='published_projects'),
-    path('rejected-submissions/', views.rejected_submissions,
-        name='rejected_submissions'),
+    path('archived-submissions/', views.archived_submissions, name='archived_submissions'),
     path('project-access-manage/<pid>/', views.project_access_manage,
         name='project_access_manage'),
     path('published-projects/<project_slug>/<version>/',
@@ -104,6 +103,9 @@ urlpatterns = [
     path('usage/credentialing/stats/', views.credentialing_stats, name='credentialing_stats'),
     path('usage/submission/stats/', views.submission_stats, name='submission_stats'),
 
+    # redirects
+    path('redirects/', views.view_redirects, name='redirects'),
+
     # front pages
     path('front-page-button/add/', views.frontpage_button_add, name='frontpage_button_add'),
     path('front-page-button/<int:button_pk>/edit/', views.frontpage_button_edit, name='frontpage_button_edit'),
@@ -144,8 +146,10 @@ urlpatterns = [
     ),
     path('code-of-conducts/<int:pk>/activate/', views.code_of_conduct_activate, name='code_of_conduct_activate'),
     # Lists of event components
-    path('event/', views.event,
-         name='event'),
+    path('event/active/', views.event_active,
+         name='event_active'),
+    path('event/archived/', views.event_archive,
+         name='event_archive'),
     path('event/manage/<event_slug>', views.event_management, name='event_management'),
     path('event_agreements/', views.event_agreement_list, name='event_agreement_list'),
     path('event_agreements/<int:pk>/', views.event_agreement_detail, name='event_agreement_detail'),

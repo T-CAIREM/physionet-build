@@ -2,6 +2,7 @@
 Module for generating notifications
 """
 from email.utils import formataddr
+from functools import cache
 from urllib import parse
 
 from django.conf import settings
@@ -9,8 +10,10 @@ from django.contrib.sites.shortcuts import get_current_site
 from django.core.mail import EmailMessage, mail_admins, send_mail
 from django.template import defaultfilters, loader
 from django.utils import timezone
-from project.models import DataAccessRequest, License
 from django.urls import reverse
+
+import project.models
+import user.models
 
 RESPONSE_ACTIONS = {0:'rejected', 1:'accepted'}
 
@@ -39,26 +42,6 @@ def mailto_url(*recipients, **params):
     if params:
         url += '?' + parse.urlencode(params, quote_via=parse.quote)
     return url
-
-
-def send_contact_message(contact_form):
-    """
-    Send a message to the contact email
-    """
-    subject = contact_form.cleaned_data['subject']
-    body = contact_form.cleaned_data['message']
-    mail_from = formataddr((contact_form.cleaned_data['name'],
-        contact_form.cleaned_data['email']))
-    message = EmailMessage(
-        subject=subject,
-        body=body,
-        from_email=settings.DEFAULT_FROM_EMAIL,  # envelope sender
-        to=[settings.CONTACT_EMAIL],
-        headers={
-            'From': mail_from,
-            'Sender': settings.DEFAULT_FROM_EMAIL
-        })
-    message.send(fail_silently=False)
 
 
 # ---------- Project App ---------- #
@@ -224,6 +207,15 @@ def resubmit_notify(project, comments):
               [project.editor.email], fail_silently=False)
 
 # ---------- Console App ---------- #
+
+
+@cache
+def example_credentialed_access_project():
+    return project.models.PublishedProject.objects.filter(
+        access_policy=project.models.AccessPolicy.CREDENTIALED,
+        is_latest_version=True,
+    ).first()
+
 
 def assign_editor_notify(project):
     """
@@ -653,8 +645,10 @@ def process_credential_complete(request, application, include_comments=True):
     body = loader.render_to_string(
         'notification/email/process_credential_complete.html', {
             'application': application,
+            'CredentialApplication': user.models.CredentialApplication,
             'applicant_name': applicant_name,
             'domain': get_current_site(request),
+            'example_project': example_credentialed_access_project(),
             'url_prefix': get_url_prefix(request),
             'include_comments': include_comments,
             'signature': settings.EMAIL_SIGNATURE,
@@ -676,11 +670,14 @@ def process_training_complete(request, training, include_comments=True):
     Notify user of training decision
     """
     subject = f'Your application for {settings.SITE_NAME} training'
+    estimated_time = 'one week'
     body = loader.render_to_string(
         'notification/email/process_training_complete.html', {
             'training': training,
             'applicant_name': training.user.get_full_name(),
             'domain': get_current_site(request),
+            'estimated_time_for_credentialing': estimated_time,
+            'example_project': example_credentialed_access_project(),
             'url_prefix': get_url_prefix(request),
             'include_comments': training.reviewer_comments,
             'signature': settings.EMAIL_SIGNATURE,
@@ -720,11 +717,13 @@ def credential_application_request(request, application):
     """
     applicant_name = application.get_full_name()
     subject = f'{settings.SITE_NAME} credentialing application notification'
+    estimated_time = 'one week'
     body = loader.render_to_string(
         'notification/email/notify_credential_request.html', {
             'application': application,
             'applicant_name': applicant_name,
             'domain': get_current_site(request),
+            'estimated_time_for_credentialing': estimated_time,
             'url_prefix': get_url_prefix(request),
             'signature': settings.EMAIL_SIGNATURE,
             'footer': email_footer(), 'SITE_NAME': settings.SITE_NAME
@@ -818,7 +817,7 @@ def confirm_user_data_access_request(data_access_request, request_protocol,
     subject = f"{settings.SITE_NAME} Data Access Request"
 
     due_date = timezone.now() + timezone.timedelta(
-        days=DataAccessRequest.DATA_ACCESS_REQUESTS_DAY_LIMIT)
+        days=project.models.DataAccessRequest.DATA_ACCESS_REQUESTS_DAY_LIMIT)
 
     body = loader.render_to_string(
         'notification/email/confirm_user_data_access_request.html', {
@@ -893,6 +892,7 @@ def task_failed_notify(name, attempts, last_error, date_time, task_name, task_pa
     """
     Notify when a task has failed and not rescheduled
     """
+    name = name or task_name
     body = loader.render_to_string(
         'notification/email/notify_failed_task.html', {
             'name': name,
@@ -911,6 +911,7 @@ def task_rescheduled_notify(name, attempts, last_error, date_time, task_name, ta
     """
     Notify when a task has been rescheduled
     """
+    name = name or task_name
     body = loader.render_to_string(
         'notification/email/notify_rescheduled_task.html', {
             'name': name,

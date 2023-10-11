@@ -31,6 +31,7 @@ ENABLE_SSO = config('ENABLE_SSO', default=False, cast=bool)
 ENABLE_LIGHTWAVE = config('ENABLE_LIGHTWAVE', default=True, cast=bool)
 SSO_REMOTE_USER_HEADER = config('SSO_REMOTE_USER_HEADER', default='HTTP_REMOTE_USER')
 SSO_LOGIN_BUTTON_TEXT = config('SSO_LOGIN_BUTTON_TEXT', default='Login')
+PRIVACY_POLICY_HTML = config('PRIVACY_POLICY_HTML', default=None)
 GCS_SIGNED_URL_LIFETIME_IN_MINUTES = config('GCS_SIGNED_URL_LIFETIME_IN_MINUTES', default=1440, cast=int)
 
 
@@ -46,11 +47,14 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',
+    'django.contrib.redirects',
 
     'ckeditor',
     # 'django_cron',
     'background_task',
     'rest_framework',
+    'oauth2_provider',
+    'corsheaders',
 
     'user',
     'project',
@@ -61,6 +65,7 @@ INSTALLED_APPS = [
     'physionet',
     'django_sass',
     'events',
+    'oauth',
 ]
 
 if ENABLE_SSO:
@@ -74,16 +79,22 @@ MIDDLEWARE = [
     'physionet.middleware.maintenance.SystemMaintenanceMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'oauth2_provider.middleware.OAuth2TokenMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware'
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # RedirectFallbackMiddleware should go at end of list, according
+    # to the docs: https://docs.djangoproject.com/en/4.1/ref/contrib/redirects/
+    'django.contrib.redirects.middleware.RedirectFallbackMiddleware',
 ]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.BasicAuthentication',
         'rest_framework.authentication.SessionAuthentication',
+        'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
     ]
 }
 
@@ -105,7 +116,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
-                'physionet.context_processors.access_policy',
+                'physionet.context_processors.project_enums',
                 'physionet.context_processors.storage_type',
                 'physionet.context_processors.platform_config',
                 'sso.context_processors.sso_enabled',
@@ -235,6 +246,11 @@ ORCID_TOKEN_URL = config('ORCID_TOKEN_URL', default='https://sandbox.orcid.org/o
 ORCID_CLIENT_ID = config('ORCID_CLIENT_ID', default=False)
 ORCID_CLIENT_SECRET = config('ORCID_CLIENT_SECRET', default=False)
 ORCID_SCOPE = config('ORCID_SCOPE', default=False)
+
+# Tags for the CITISOAPService API
+CITI_USERNAME = config('CITI_USERNAME', default='')
+CITI_PASSWORD = config('CITI_PASSWORD', default='')
+CITI_SOAP_URL = config('CITI_SOAP_URL', default='')
 
 # List of permitted HTML tags and attributes for rich text fields.
 # The 'default' configuration permits all of the tags below.  Other
@@ -560,12 +576,7 @@ if STORAGE_TYPE == StorageTypes.GCP:
 ENABLE_CLOUD_RESEARCH_ENVIRONMENTS = config('ENABLE_CLOUD_RESEARCH_ENVIRONMENTS', default=False, cast=bool)
 
 if ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
-    CLOUD_RESEARCH_ENVIRONMENTS_API_JWT_SERVICE_ACCOUNT_PATH = os.path.join(
-        BASE_DIR,
-        config('CLOUD_RESEARCH_ENVIRONMENTS_API_JWT_SERVICE_ACCOUNT_PATH')
-    )
     CLOUD_RESEARCH_ENVIRONMENTS_API_URL = config('CLOUD_RESEARCH_ENVIRONMENTS_API_URL')
-    CLOUD_RESEARCH_ENVIRONMENTS_API_JWT_AUDIENCE = config('CLOUD_RESEARCH_ENVIRONMENTS_API_JWT_AUDIENCE')
     INSTALLED_APPS.append('environment.apps.EnvironmentConfig')
 
 
@@ -607,3 +618,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 
 # minimum number of word needed for research_summary field for Credentialing Model.
 MIN_WORDS_RESEARCH_SUMMARY_CREDENTIALING = config('MIN_WORDS_RESEARCH_SUMMARY_CREDENTIALING', cast=int, default=20)
+
+# Django configuration for file upload (see https://docs.djangoproject.com/en/4.2/ref/settings/)
+DATA_UPLOAD_MAX_NUMBER_FILES = config('DATA_UPLOAD_MAX_NUMBER_FILES', cast=int, default=1000)
+DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', cast=int, default=2621440)

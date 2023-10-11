@@ -53,10 +53,14 @@ def create_bucket(project, version, title, protected=True):
     """
     storage_client = storage.Client()
     bucket_name, email = bucket_info(project, version)
-    storage_client.create_bucket(bucket_name)
+
     bucket = storage_client.bucket(bucket_name)
-    bucket.iam_configuration.bucket_policy_only_enabled = True
-    bucket.patch()
+    # Only bucket-level permissions are enforced; there are no per-file ACLs.
+    bucket.iam_configuration.uniform_bucket_level_access_enabled = True
+    # Clients accessing this bucket will be billed for download costs.
+    bucket.requester_pays = True
+    storage_client.create_bucket(bucket)
+
     LOGGER.info("Created bucket {0} for project {1}".format(
         bucket_name.lower(), project))
     if protected:
@@ -482,9 +486,16 @@ def generate_doi_payload(project, core_project=False, event="draft"):
     if event == "publish":
         author_list = project.author_list().order_by('display_order')
         for author in author_list:
-            authors.append({"givenName": author.first_names,
-                            "familyName": author.last_name,
-                            "name": author.get_full_name(reverse=True)})
+            author_metadata = {"givenName": author.first_names,
+                               "familyName": author.last_name,
+                               "name": author.get_full_name(reverse=True)}
+            if author.user.has_orcid():
+                author_metadata["nameIdentifiers"] = [{
+                    "nameIdentifier": f'https://orcid.org/{author.user.get_orcid_id()}',
+                    "nameIdentifierScheme": "ORCID",
+                    "schemeUri": "https://orcid.org/"
+                }]
+            authors.append(author_metadata)
 
     # link to parent or child projects
     if event == "publish" and core_project:

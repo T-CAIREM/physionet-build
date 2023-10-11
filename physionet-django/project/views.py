@@ -47,9 +47,11 @@ from project.models import (
     PublishedProject,
     Reference,
     StorageRequest,
+    SubmissionStatus,
     Topic,
     UploadedDocument,
 )
+from project.authorization.access import can_view_project_files, can_access_project
 from project.projectfiles import ProjectFiles
 from project.validators import validate_filename, validate_gcs_bucket_object
 from user.forms import AssociatedEmailChoiceForm
@@ -247,18 +249,18 @@ def project_home(request):
     missing_affiliations = []
     pending_revisions = []
     for p in projects:
-        if (p.submission_status == 50
+        if (p.submission_status == SubmissionStatus.NEEDS_APPROVAL
                 and not p.all_authors_approved()):
             if p.authors.get(user=user).is_submitting:
                 pending_author_approvals.append(p)
             elif not p.authors.get(user=user).approval_datetime:
                 pending_author_approvals.append(p)
-        if (p.submission_status == 30
+        if (p.submission_status == SubmissionStatus.NEEDS_RESUBMISSION
                 and p.authors.get(user=user).is_submitting):
             pending_revisions.append(p)
-        if p.submission_status == 0 and p.authors.get(user=user).affiliations.count() == 0:
+        if p.submission_status == SubmissionStatus.UNSUBMITTED and p.authors.get(user=user).affiliations.count() == 0:
             missing_affiliations.append([p, p.authors.get(user=user).creation_date])
-    rejected_projects = [a.project for a in archived_authors if a.project.archive_reason == 3]
+    archived_projects = [a.project for a in archived_authors]
 
     invitation_response_formset = InvitationResponseFormSet(
         queryset=AuthorInvitation.get_user_invitations(user))
@@ -276,7 +278,7 @@ def project_home(request):
         {
             'projects': projects,
             'published_projects': published_projects,
-            'rejected_projects': rejected_projects,
+            'archived_projects': archived_projects,
             'missing_affiliations': missing_affiliations,
             'pending_author_approvals': pending_author_approvals,
             'invitation_response_formset': invitation_response_formset,
@@ -484,7 +486,7 @@ def edit_affiliation(request, project_slug, **kwargs):
     project, authors = kwargs['project'], kwargs['authors']
     author = authors.get(user=request.user)
 
-    if project.submission_status not in [0, 30]:
+    if project.submission_status not in [SubmissionStatus.UNSUBMITTED, SubmissionStatus.NEEDS_RESUBMISSION]:
         raise Http404()
 
     # Reload the formset with the first empty form
@@ -1094,7 +1096,7 @@ def project_files(request, project_slug, subdir='', **kwargs):
             'file_warning': file_warning,
             'files_editable': files_editable,
             'maintenance_message': maintenance_message,
-            'is_lightwave_supported': ProjectFiles().is_lightwave_supported(),
+            'is_lightwave_supported': project.files.is_lightwave_supported(),
             'storage_type': settings.STORAGE_TYPE,
         },
     )
@@ -1219,7 +1221,7 @@ def project_preview(request, project_slug, subdir='', **kwargs):
             'platform_citations': platform_citations,
             'parent_projects': parent_projects,
             'has_passphrase': has_passphrase,
-            'is_lightwave_supported': ProjectFiles().is_lightwave_supported(),
+            'is_lightwave_supported': project.files.is_lightwave_supported(),
             'show_platform_wide_citation': show_platform_wide_citation,
             'main_platform_citation': main_platform_citation,
         },
@@ -1331,7 +1333,7 @@ def project_submission(request, project_slug, **kwargs):
                     pass
             # Register the approval if valid
             if project.approve_author(author):
-                if project.submission_status == 60:
+                if project.submission_status == SubmissionStatus.NEEDS_PUBLICATION:
                     messages.success(request, 'You have approved the project for publication. The editor will publish it shortly')
                     notification.authors_approved_notify(request, project)
                 else:
@@ -1348,7 +1350,7 @@ def project_submission(request, project_slug, **kwargs):
         for e in edit_logs:
             e.set_quality_assurance_results()
         # Awaiting authors
-        if project.submission_status == 50:
+        if project.submission_status == SubmissionStatus.NEEDS_APPROVAL:
             authors = authors.order_by('approval_datetime')
             for a in authors:
                 a.set_display_info()
@@ -1419,7 +1421,7 @@ def project_ethics(request, project_slug, **kwargs):
 def edit_ethics(request, project_slug, **kwargs):
     project = kwargs['project']
 
-    if project.submission_status not in [0, 30]:
+    if project.submission_status not in [SubmissionStatus.UNSUBMITTED, SubmissionStatus.NEEDS_RESUBMISSION]:
         raise Http404()
 
     # Reload the formset with the first empty form
@@ -1471,20 +1473,17 @@ def serve_document(request, file_name):
 
 
 @login_required
-def rejected_submission_history(request, project_slug):
+def archived_submission_history(request, project_slug):
     """
-    Submission history for a rejected project
+    Submission history for an archived (rejected or closed) project
     """
     user = request.user
     try:
         # Checks if the user is an author
-        project = ArchivedProject.objects.get(slug=project_slug,
-                                              archive_reason=3,
-                                              authors__user=user)
+        project = ArchivedProject.objects.get(slug=project_slug, authors__user=user)
     except ArchivedProject.DoesNotExist:
         if user.has_perm('project.change_archivedproject'):
-            project = get_object_or_404(ArchivedProject, slug=project_slug,
-                                        archive_reason=3)
+            project = get_object_or_404(ArchivedProject, slug=project_slug)
         else:
             raise Http404()
 
@@ -1493,7 +1492,7 @@ def rejected_submission_history(request, project_slug):
         e.set_quality_assurance_results()
     copyedit_logs = project.copyedit_log_history()
 
-    return render(request, 'project/rejected_submission_history.html',
+    return render(request, 'project/archived_submission_history.html',
                   {'project': project, 'edit_logs': edit_logs,
                    'copyedit_logs': copyedit_logs})
 
@@ -1568,7 +1567,7 @@ def published_files_panel(request, project_slug, version):
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if project.has_access(user) or has_passphrase:
+    if can_view_project_files(project, user) or has_passphrase:
         (display_files, display_dirs, dir_breadcrumbs, parent_dir,
          file_error) = get_project_file_info(project=project, subdir=subdir)
 
@@ -1630,7 +1629,7 @@ def serve_published_project_file(request, project_slug, version,
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if project.has_access(user) or has_passphrase:
+    if can_view_project_files(project, user) or has_passphrase:
         file_path = os.path.join(project.file_root(), full_file_name)
         try:
             attach = ('download' in request.GET)
@@ -1673,7 +1672,7 @@ def display_published_project_file(request, project_slug, version,
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if project.has_access(user) or has_passphrase:
+    if can_view_project_files(project, user) or has_passphrase:
         return display_project_file(request, project, full_file_name)
 
     # Display error message: "you must [be a credentialed user and]
@@ -1706,7 +1705,7 @@ def serve_published_project_zip(request, project_slug, version):
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if project.has_access(user) or has_passphrase:
+    if can_view_project_files(project, user) or has_passphrase:
         try:
             return serve_file(project.zip_name(full=True))
         except FileNotFoundError:
@@ -1802,7 +1801,8 @@ def published_project(request, project_slug, version, subdir=''):
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60 * 60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    has_access = project.has_access(user) or has_passphrase
+    can_view_files = can_view_project_files(project, user) or has_passphrase
+    is_authorized = can_access_project(project, user) or has_passphrase
     has_signed_dua = False if not user.is_authenticated else DUASignature.objects.filter(
         project=project,
         user=user
@@ -1835,7 +1835,8 @@ def published_project(request, project_slug, version, subdir=''):
         'topics': topics,
         'languages': languages,
         'contact': contact,
-        'has_access': has_access,
+        'is_authorized': is_authorized,
+        'can_view_files': can_view_files,
         'has_signed_dua': has_signed_dua,
         'has_accepted_access_request': has_accepted_access_request,
         'requires_training': requires_training,
@@ -1850,13 +1851,13 @@ def published_project(request, project_slug, version, subdir=''):
         'data_access': data_access,
         'messages': messages.get_messages(request),
         'platform_citations': platform_citations,
-        'is_lightwave_supported': ProjectFiles().is_lightwave_supported(),
-        'is_wget_supported': ProjectFiles().is_wget_supported(),
+        'is_lightwave_supported': project.files.is_lightwave_supported(),
+        'is_wget_supported': project.files.is_wget_supported(),
         'show_platform_wide_citation': show_platform_wide_citation,
         'main_platform_citation': main_platform_citation,
     }
     # The file and directory contents
-    if has_access:
+    if can_view_files:
         if user.is_authenticated:
             AccessLog.objects.update_or_create(project=project, user=request.user)
 
@@ -1919,7 +1920,7 @@ def sign_dua(request, project_slug, version):
         project.deprecated_files
         or project.embargo_active()
         or project.access_policy not in {AccessPolicy.RESTRICTED, AccessPolicy.CREDENTIALED}
-        or project.has_access(user)
+        or can_access_project(project, user)
     ):
         return redirect('published_project',
                         project_slug=project_slug, version=version)
@@ -2204,7 +2205,7 @@ def published_project_request_access(request, project_slug, version, access_type
                                             platform=access_type)
 
     # Check if the person has access to the project.
-    if not project.has_access(request.user):
+    if not can_access_project(project, user):
         return redirect('published_project', project_slug=project_slug,
             version=version)
 
