@@ -1,4 +1,6 @@
+from asyncio import events
 from datetime import datetime
+import re
 
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
@@ -152,6 +154,7 @@ def event_home(request):
         status=EventApplication.EventApplicationStatus.WAITLISTED).filter(event__host=user,
                                                                           event__end_date__gte=datetime.now())
     participation_response_formset = EventApplicationResponseFormSet(queryset=participation_requests)
+
     return render(request, 'events/event_home.html',
                   {'events_active': events_active,
                    'events_past': events_past,
@@ -246,6 +249,9 @@ def manage_co_hosts(request):
     Manage co-hosts of an event
     """
     user = request.user
+    error_message = None
+
+    print(request.method)
 
     if request.method == 'POST':
         participant_id = request.POST.get('participant_id')
@@ -258,11 +264,14 @@ def manage_co_hosts(request):
         if event.end_date < datetime.now().date():
             error_message = 'You cannot manage co-hosts of an event that has ended'
         if not event.participants.filter(id=participant_id).exists():
-            error_message = 'User is not a participant of this event' 
+            error_message = 'User is not a participant of this event'
+
+        if error_message is not None:
+            return JsonResponse({'error': error_message}, status=403)
 
         participant = event.participants.get(id=participant_id)
 
-        if 'Remove cohost' in request.POST.get('submit'):
+        if request.POST.get('submit') == 'Remove cohost':
             if not participant.is_cohost:
                 return JsonResponse({'error': 'User is not a cohost of this event'}, status=403)
             participant.is_cohost = False
@@ -273,7 +282,7 @@ def manage_co_hosts(request):
                                                                 status=participant.is_cohost)
 
             return JsonResponse({'success': 'Cohost removed successfully'})
-        elif 'Make cohost' in request.POST.get('submit'):
+        elif request.POST.get('submit') == 'Make cohost':
             if participant.is_cohost:
                 return JsonResponse({'error': 'User is already a cohost of this event'}, status=403)
             participant.is_cohost = True
@@ -284,10 +293,7 @@ def manage_co_hosts(request):
                                                                 status=participant.is_cohost)
 
             return JsonResponse({'success': 'Cohost added successfully'})
-
-    messages.error(request, 'Invalid request')
-
-    if error_message:
-        return JsonResponse({'error': error_message}, status=403)
+        else:
+            return JsonResponse({'error': 'Invalid request'}, status=403)
 
     return redirect(event_home)
