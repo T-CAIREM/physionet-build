@@ -18,7 +18,8 @@
         <td>{{ participant.user.is_credentialed }}</td>
         <td>
           {% if not event.has_ended %}
-          <form class="manage-cohost" action="{% url 'manage_co_hosts' event.slug %}">
+          <form class="manage-cohost" action="{% url 'manage_co_hosts' event.slug %}"
+            data-cohost-status="{{ participant.is_cohost }}">
             {% csrf_token %}
             <input type="text" name="event" value="{{ event.slug }}" hidden>
             <input type="text" name="participant" value="{{ participant.id }}" hidden>
@@ -49,6 +50,9 @@
       let submit_value = $form.find('input[type="submit"]').val();
       let csrftoken = e.target.csrfmiddlewaretoken.value;
       let url = e.target.action;
+
+      var cohostStatus = $form.attr('data-cohost-status');
+      console.log(cohostStatus);
 
       $.ajax({
         url: url,
