@@ -45,6 +45,7 @@ class NavLink:
     @functools.cached_property
     def required_permission(self):
         view = get_resolver().resolve(self.url).func
+        print(view.required_permission)
         return view.required_permission
 
     def is_visible(self, request):
@@ -217,4 +218,9 @@ CONSOLE_NAV_MENU = NavMenu([
     ]),
 
     NavLink(_('News'), 'news_console', 'newspaper'),
+    NavSubmenu(_('Power Users'), 'cloud_groups', 'book', [
+        NavLink(_('User Panel'), 'cloud_groups'),
+        NavLink(_('Group Management'), 'cloud_groups_management'),
+        NavLink(_('Group Creation'), 'create_cloud_group'),
+    ]),
 ])
