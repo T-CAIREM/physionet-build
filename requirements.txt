@@ -314,8 +314,8 @@ grpcio==1.64.1 ; python_version >= "3.9" and python_version < "4.0" \
     --hash=sha256:ed6091fa0adcc7e4ff944090cf203a52da35c37a130efa564ded02b7aff63bcd \
     --hash=sha256:ee73a2f5ca4ba44fa33b4d7d2c71e2c8a9e9f78d53f6507ad68e7d2ad5f64a22 \
     --hash=sha256:f10193c69fc9d3d726e83bbf0f3d316f1847c3071c8c93d8090cf5f326b14309
-hdn-research-environment==3.1.2rc1 ; python_version >= "3.9" and python_version < "4.0" \
-    --hash=sha256:3caaa5a3e811029d4ad7124ac30f940b831e9ac145795daad7d4021a945bebd9
+hdn-research-environment==3.1.2rc2 ; python_version >= "3.9" and python_version < "4.0" \
+    --hash=sha256:7f46978b8933e91ff610baf029028411d8eafce1c3aa38dd5f24bb41f4be0298
 html2text==2018.1.9 ; python_version >= "3.9" and python_version < "4.0" \
     --hash=sha256:490db40fe5b2cd79c461cf56be4d39eb8ca68191ae41ba3ba79f6cb05b7dd662 \
     --hash=sha256:627514fb30e7566b37be6900df26c2c78a030cc9e6211bda604d8181233bcdd4
