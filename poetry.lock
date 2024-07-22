@@ -870,13 +870,13 @@ protobuf = ">=3.12.0"
 
 [[package]]
 name = "hdn-research-environment"
-version = "3.1.4rc2"
+version = "3.1.5"
 description = "A Django app for supporting cloud-native research environments"
 category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "hdn-research-environment-3.1.4rc2.tar.gz", hash = "sha256:fe8b73029d15c6681a7f0dcabe0fb4951e821598d1e4ac8fc3dda345079d5cf4"},
+    {file = "hdn-research-environment-3.1.5.tar.gz", hash = "sha256:3919d07b23bcd5bb641eaf878888bf961e8014b1b7fe07ab02ce1a7d471b538d"},
 ]
 
 [package.dependencies]
@@ -1875,4 +1875,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "27d9f005d92d789d4410285709e75148b441c36db4a211a4e883c9bfdb0a7343"
+content-hash = "025d9836f499054afee9c04430565abc6147ff3be2e13536e847c35121af639b"
