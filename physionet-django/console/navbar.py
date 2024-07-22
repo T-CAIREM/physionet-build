@@ -223,4 +223,7 @@ CONSOLE_NAV_MENU = NavMenu([
         NavLink(_('Group Management'), 'cloud_groups_management'),
         NavLink(_('Group Creation'), 'create_cloud_group'),
     ]),
+    NavSubmenu(_('Monitoring'), 'datasets_monitoring', 'chart-line', [
+        NavLink(_('Dataset Total Usage Time'), 'get_datasets_monitoring_data'),
+    ]),
 ])
