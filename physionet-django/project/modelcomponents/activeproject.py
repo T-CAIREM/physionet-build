@@ -162,21 +162,25 @@ class ActiveProject(Metadata, UnpublishedProject, SubmissionInfo):
 
     REQUIRED_FIELDS = (
         # 0: Database
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'conflicts_of_interest', 'version', 'license',
-         'short_description'),
+        ('title', 'abstract', 'background',
+         'methods', 'content_description', 'usage_notes',
+         'ethics_statement', 'conflicts_of_interest',
+         'version', 'license', 'short_description'),
         # 1: Software
-        ('title', 'abstract', 'background', 'content_description',
-         'usage_notes', 'installation', 'conflicts_of_interest', 'version',
-         'license', 'short_description'),
+        ('title', 'abstract', 'background',
+         'content_description', 'usage_notes', 'installation',
+         'ethics_statement', 'conflicts_of_interest',
+         'version', 'license', 'short_description'),
         # 2: Challenge
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'conflicts_of_interest', 'version', 'license',
-         'short_description'),
+        ('title', 'abstract', 'background',
+         'methods', 'content_description', 'usage_notes',
+         'ethics_statement', 'conflicts_of_interest',
+         'version', 'license', 'short_description'),
         # 3: Model
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'installation', 'conflicts_of_interest', 'version',
-         'license', 'short_description'),
+        ('title', 'abstract', 'background',
+         'methods', 'content_description', 'usage_notes', 'installation',
+         'ethics_statement', 'conflicts_of_interest',
+         'version', 'license', 'short_description'),
     )
 
     # Custom labels that don't match model field names
@@ -345,9 +349,9 @@ class ActiveProject(Metadata, UnpublishedProject, SubmissionInfo):
                 l = self.LABELS[self.resource_type.id][attr] if attr in self.LABELS[self.resource_type.id] else attr.title().replace('_', ' ')
                 self.integrity_errors.append('Missing required field: {0}'.format(l))
 
-        # Ethics
-        if not self.ethics_statement:
-            self.integrity_errors.append('Missing required field: Ethics Statement')
+        # References
+        if not self.has_valid_reference_order():
+            self.integrity_errors.append('Order of references may be incorrect')
 
         published_projects = self.core_project.publishedprojects.all()
         if published_projects:
@@ -369,6 +373,30 @@ class ActiveProject(Metadata, UnpublishedProject, SubmissionInfo):
             return False
         else:
             return True
+
+    def has_valid_reference_order(self):
+        """
+        Check whether order of references is valid.
+
+        Past bugs in the project editing forms can result in
+        references having 'order' set to None, or the order of 'order'
+        not matching the order displayed in the content/copyedit page.
+        It is impractical to repair all existing projects
+        automatically since that requires guessing the author's
+        intent.
+
+        Therefore, if a project's reference order is undefined or
+        inconsistent, we want to require the author or editor to
+        address it before the project can be submitted or published.
+        """
+        references = self.references.order_by('id')
+        order_list = [r.order for r in references]
+
+        for order1, order2 in zip(order_list, order_list[1:]):
+            if order1 is None or order2 is None or order1 >= order2:
+                return False
+
+        return True
 
     def is_submittable(self):
         """

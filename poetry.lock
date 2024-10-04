@@ -833,12 +833,12 @@ protobuf = ">=3.12.0"
 
 [[package]]
 name = "hdn-research-environment"
-version = "2.3.8"
+version = "3.2.1"
 description = "A Django app for supporting cloud-native research environments"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "hdn-research-environment-2.3.8.tar.gz", hash = "sha256:371b33950e3c1598b650edefd42fa19a3532d2ca815dd42f495f0460c57df97f"},
+    {file = "hdn-research-environment-3.2.1.tar.gz", hash = "sha256:6aeb6489d02093df9e863164d6d25a345c1d553789c1a7e0699304fda001ddd5"},
 ]
 
 [package.dependencies]
@@ -1326,6 +1326,23 @@ files = [
 ]
 
 [[package]]
+name = "pyjwt"
+version = "2.9.0"
+description = "JSON Web Token implementation in Python"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "PyJWT-2.9.0-py3-none-any.whl", hash = "sha256:3b02fb0f44517787776cf48f2ae25d8e14f300e6d7545a4315cee571a415e850"},
+    {file = "pyjwt-2.9.0.tar.gz", hash = "sha256:7e1e5b56cc735432a7369cbfa0efe50fa113ebecdc04ae6922deba8b84582d0c"},
+]
+
+[package.extras]
+crypto = ["cryptography (>=3.4.0)"]
+dev = ["coverage[toml] (==5.0.4)", "cryptography (>=3.4.0)", "pre-commit", "pytest (>=6.0.0,<7.0.0)", "sphinx", "sphinx-rtd-theme", "zope.interface"]
+docs = ["sphinx", "sphinx-rtd-theme", "zope.interface"]
+tests = ["coverage[toml] (==5.0.4)", "pytest (>=6.0.0,<7.0.0)"]
+
+[[package]]
 name = "pyopenssl"
 version = "23.2.0"
 description = "Python wrapper module around the OpenSSL library"
@@ -1800,4 +1817,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "670e30700a8a0497adc80b2f683c489c5ea539b109ce54427f8b64717704fc39"
+content-hash = "23b54601a6a94c6824e7b7ada009153cc9d191a03dc3025ce1e4108caec12210"
