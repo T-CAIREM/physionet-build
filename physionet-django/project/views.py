@@ -1945,6 +1945,40 @@ def published_project(request, project_slug, version, subdir=''):
     except AWS.DoesNotExist:
         s3_uri = None
 
+    
+    # Check for attached shared bucket
+    user_can_access_bucket = False
+    workspace_id = None
+    is_owner = False
+    
+    try:
+        # Try to get the ProjectResource for this project
+        from environment.models import ProjectResource
+        
+        project_resource = ProjectResource.objects.get(project=project)
+        
+        # If the user is logged in and has a cloud identity, check if they have access to the bucket
+        if user.is_authenticated and hasattr(user, 'cloud_identity'):
+            # Import services from environment app
+            from environment import services
+            
+            # Get shared workspaces for this user
+            shared_workspaces = services.get_shared_workspaces_list(user)
+            
+            # Check if the user has access to the bucket
+            for workspace in shared_workspaces:
+                for bucket in workspace.buckets:
+                    if bucket.name == project_resource.bucket_name:
+                        user_can_access_bucket = True
+                        workspace_id = workspace.gcp_project_id
+                        is_owner = bucket.is_owner
+                        break
+                if user_can_access_bucket:
+                    break
+    except:
+        # No resource attached to this project or error occurred
+        pass
+    
     context = {
         'project': project,
         'authors': authors,
@@ -1975,7 +2009,12 @@ def published_project(request, project_slug, version, subdir=''):
         's3_uri': s3_uri,
         'show_platform_wide_citation': show_platform_wide_citation,
         'main_platform_citation': main_platform_citation,
+        # Add project resource context
+        'user_can_access_bucket': user_can_access_bucket,
+        'workspace_id': workspace_id,
+        'is_owner': is_owner,
     }
+    
     # The file and directory contents
     if can_view_files:
         if user.is_authenticated:

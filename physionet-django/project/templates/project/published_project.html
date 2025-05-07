@@ -5,6 +5,7 @@
 {% load static %}
 
 {% load project_templatetags %}
+{% load environment_templatetags %}
 
 {# Note: wfdb-python (<= 4.1.0) expects to find the project version #}
 {# number in the following format.  This is deprecated; relying on it #}
@@ -19,6 +20,22 @@
 {% block local_css %}
   <link rel="stylesheet" type="text/css" href="{% static 'project/css/project-content.css' %}"/>
   <link rel="stylesheet" type="text/css" href="{% static 'highlight/css/default.min.css' %}"/>
+  <style>
+    .resource-badge {
+      display: inline-block;
+      padding: 0.25em 0.6em;
+      font-size: 75%;
+      font-weight: 700;
+      line-height: 1;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: baseline;
+      border-radius: 0.25rem;
+      background-color: #17a2b8;
+      color: #fff;
+      margin-right: 0.5rem;
+    }
+  </style>
 {% endblock %}
 
 {% block local_js_top %}
@@ -195,6 +212,48 @@
             {% endif %}
           </div>
         </div>
+
+        {% if project.project_resource %}
+        <!-- Project Resources Section -->
+        <div class="card my-4">
+            <h5 class="card-header">
+                <i class="fa fa-database mr-2"></i> Project Resources
+            </h5>
+            <div class="card-body">
+                <div class="mb-3">
+                    <h6 class="mb-2">Shared Bucket</h6>
+                    <p class="mb-1"><strong>Name:</strong> {{ project.project_resource.bucket_name }}</p>
+                    
+                    <div class="mt-3">
+                        {% if user_can_access_bucket %}
+                            <a href="{% url 'manage_shared_bucket_files' shared_workspace_name=workspace_id shared_bucket_name=project.project_resource.bucket_name %}" 
+                              class="btn btn-primary btn-sm btn-block">
+                                <i class="fa fa-folder-open mr-1"></i> Access Files
+                            </a>
+                        {% else %}
+                            <a href="{% url 'request_bucket_access' workspace_id=workspace_id bucket_name=project.project_resource.bucket_name %}" 
+                              class="btn btn-outline-primary btn-sm btn-block">
+                                <i class="fa fa-key mr-1"></i> Request Access
+                            </a>
+                        {% endif %}
+                    </div>
+                    
+                    {% if is_owner %}
+                        <div class="mt-2">
+                            <form method="post" action="{% url 'detach_bucket_from_project' resource_id=project.project_resource.id %}" 
+                                  onsubmit="return confirm('Are you sure you want to detach this bucket from the project?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger btn-block">
+                                    <i class="fa fa-unlink mr-1"></i> Detach Bucket
+                                </button>
+                            </form>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card my-4">
           <h5 class="card-header">Discovery</h5>
           <div class="card-body">
@@ -337,6 +396,15 @@
             </li>
           {% endif %}
 
+          {% if project.project_resource and user_can_access_bucket %}
+            <li>
+              Access files in the associated shared bucket:
+              <a href="{% url 'manage_shared_bucket_files' shared_workspace_name=workspace_id shared_bucket_name=project.project_resource.bucket_name %}" 
+                 class="btn btn-sm btn-primary ml-2">
+                <i class="fa fa-folder-open mr-1"></i> Open Shared Bucket
+              </a>
+            </li>
+          {% endif %}
         </ul>
         {# ZIP END #}
 
