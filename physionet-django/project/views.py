@@ -63,6 +63,10 @@ from project.cloud.s3 import (
 )
 from django.db.models import F, DateTimeField, ExpressionWrapper
 
+from environment.models import ProjectResource
+from environment import services
+
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -1978,6 +1982,30 @@ def published_project(request, project_slug, version, subdir=''):
     except:
         # No resource attached to this project or error occurred
         pass
+
+    # Optional for HDN - When Research Environment is Enabled 
+    if settings.ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
+        user_can_access_bucket = False
+        workspace_project_id = None
+        is_owner = False
+        
+        try:        
+            project_resource = ProjectResource.objects.get(project=project)
+            workspace_project_id = project_resource.workspace_project_id
+            if user.is_authenticated and hasattr(user, 'cloud_identity'):
+                shared_workspaces = services.get_shared_workspaces_list(user)
+                for workspace in shared_workspaces:
+                    for bucket in workspace.buckets:
+                        if bucket.name == project_resource.bucket_name:
+                            user_can_access_bucket = True
+                            is_owner = bucket.is_owner
+                            break
+                    if user_can_access_bucket:
+                        break
+        except:
+            LOGGER.error(
+                f"Error while checking if user can access bucket for project {project_slug} version {version}"
+            )
     
     context = {
         'project': project,
@@ -2009,9 +2037,8 @@ def published_project(request, project_slug, version, subdir=''):
         's3_uri': s3_uri,
         'show_platform_wide_citation': show_platform_wide_citation,
         'main_platform_citation': main_platform_citation,
-        # Add project resource context
         'user_can_access_bucket': user_can_access_bucket,
-        'workspace_id': workspace_id,
+        'workspace_project_id': workspace_project_id,
         'is_owner': is_owner,
     }
     
