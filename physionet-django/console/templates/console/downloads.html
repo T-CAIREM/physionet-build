@@ -1,0 +1,44 @@
+{% extends "console/base_console.html" %}
+
+{% load static %}
+
+{% block title %}Export data{% endblock %}
+
+{% block content %}
+
+<div class="card mb-3">
+  <div class="card-header">
+    Export data
+  </div>
+  <div class="card-body">
+    <div class="table-responsive">
+        
+      <div class="mb-4">
+        <h6>Users</h6>
+        <p>Download a complete list of users, including their names, email addresses, and registration dates.</p>
+        <a href="{% url 'download_users' %}" class="btn btn-primary">
+          Download users
+        </a>
+      </div>
+      
+      <div class="mb-4">
+        <h6>Published projects</h6>
+        <p>Download a complete list of published projects, including project names, descriptions, and timelines.</p>
+        <a href="{% url 'download_projects' %}" class="btn btn-primary">
+          Download published projects
+        </a>
+      </div>
+
+      <div class="mb-4">
+        <h6>Published authors</h6>
+        <p>Download a complete list of published authors, including their names, email addresses, and affiliations.</p>
+        <a href="{% url 'download_published_authors' %}" class="btn btn-primary">
+          Download published authors
+        </a>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+{% endblock %}

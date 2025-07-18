@@ -4,9 +4,9 @@
 # All published images are also tagged with corresponding git commit sha.
 #
 # To run the tests locally in a similar environment to GitHub Actions you can use:
-# $ docker-compose -f docker/docker-compose.test.yml build
-# $ docker-compose -f docker/docker-compose.test.yml run --rm test
-# $ docker-compose -f docker/docker-compose.test.yml down
+# $ docker compose -f docker/docker-compose.test.yml build
+# $ docker compose -f docker/docker-compose.test.yml run --rm test
+# $ docker compose -f docker/docker-compose.test.yml down
 
 name: Docker / Build, Test and Publish
 
@@ -17,6 +17,9 @@ on:
   pull_request:
     branches:
       - dev
+  merge_group:
+    types:
+      - checks_requested
   workflow_dispatch:
     inputs:
       publish_tag:
@@ -42,10 +45,10 @@ jobs:
           load: true
 
       - name: Run tests
-        run: docker-compose -f docker/docker-compose.test.yml run --rm test
+        run: docker compose -f docker/docker-compose.test.yml run --rm test
 
       - name: Stop and remove containers
-        run: docker-compose -f docker/docker-compose.test.yml down
+        run: docker compose -f docker/docker-compose.test.yml down
 
       - name: Save physionet image
         if: github.ref == 'refs/heads/dev' || github.event.inputs.publish_tag
@@ -53,7 +56,7 @@ jobs:
 
       - name: Upload physionet image
         if: github.ref == 'refs/heads/dev' || github.event.inputs.publish_tag
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: physionet
           path: /tmp/physionet.tar.gz
@@ -66,7 +69,7 @@ jobs:
     needs: build
     steps:
       - name: Download physionet image
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4.1.7
         with:
           name: physionet
           path: /tmp

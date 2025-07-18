@@ -42,6 +42,7 @@ from project.models import (
 )
 from user.models import User, TrainingType
 from user.validators import validate_affiliation
+from django.forms import ModelMultipleChoiceField
 
 INVITATION_CHOICES = (
     (1, 'Accept'),
@@ -493,10 +494,12 @@ class NewProjectVersionForm(forms.ModelForm):
                     author=author)
 
         # Other related objects
-        for p_reference in self.latest_project.references.all():
+        for p_reference in self.latest_project.references.order_by('order'):
             reference = Reference.objects.create(
                 description=p_reference.description,
-                project=project)
+                order=p_reference.order,
+                project=project,
+            )
 
         for p_publication in self.latest_project.publications.all():
             publication = Publication.objects.create(
@@ -545,28 +548,6 @@ class ContentForm(forms.ModelForm):
 
     """
 
-    FIELDS = (
-        # 0: Database
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'release_notes', 'acknowledgements',
-         'conflicts_of_interest',
-         ),
-        # 1: Software
-        ('title', 'abstract', 'background', 'content_description',
-         'methods', 'installation', 'usage_notes', 'release_notes',
-         'acknowledgements', 'conflicts_of_interest', ),
-        # 2: Challenge
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'release_notes', 'acknowledgements',
-         'conflicts_of_interest',
-         ),
-        # 3: Model
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'installation', 'usage_notes', 'release_notes',
-         'acknowledgements', 'conflicts_of_interest',
-         ),
-    )
-
     HELP_TEXTS = (
         # 0: Database
         {'methods': '* The methodology employed for the study or research. Describe how the data was collected.',
@@ -586,17 +567,18 @@ class ContentForm(forms.ModelForm):
          'content_description': '* Describe the model and any supporting data and software.',
          'installation': '* Instructions on how to set up a software environment for using the model.',
          'usage_notes': '* Describe how you intend others to (re)use the model.',
-         'methods': 'Details on the technical implementation. ie. the development process, and the underlying algorithms.',
+         'methods': (
+             '* Details on the technical implementation. '
+             'ie. the development process, and the underlying algorithms.'
+         ),
          'usage_notes': '* How the software is to be used. List some example function calls or specify the demo file(s).'},
     )
 
     class Meta:
         model = ActiveProject
-        # This includes fields for all resource types.
-        fields = ('title', 'abstract', 'background', 'methods',
-                  'content_description', 'installation', 'usage_notes',
-                  'acknowledgements', 'conflicts_of_interest',
-                  'release_notes',)
+
+        # Fields are chosen dynamically by __init__
+        exclude = ()
 
         help_texts = {
             'title': '* The title of the resource.',
@@ -608,12 +590,16 @@ class ContentForm(forms.ModelForm):
             'release_notes': 'Important notes about the current release, and changes from previous versions.'
         }
 
-    def __init__(self, resource_type, editable=True, **kwargs):
-        super(ContentForm, self).__init__(**kwargs)
-        self.fields = OrderedDict((k, self.fields[k]) for k in self.FIELDS[resource_type])
+    def __init__(self, editable=True, **kwargs):
+        super().__init__(**kwargs)
+        resource_type = self.instance.resource_type.id
 
-        for l in ActiveProject.LABELS[resource_type]:
-            self.fields[l].label = ActiveProject.LABELS[resource_type][l]
+        fields = ['title']
+        for section in self.instance.content_sections():
+            if section.field_name != 'ethics_statement':
+                self.fields[section.field_name].label = section.title
+                fields.append(section.field_name)
+        self.fields = OrderedDict((k, self.fields[k]) for k in fields)
 
         for h in self.__class__.HELP_TEXTS[resource_type]:
             self.fields[h].help_text = self.__class__.HELP_TEXTS[resource_type][h]
@@ -730,10 +716,19 @@ class ReferenceFormSet(BaseGenericInlineFormSet):
     item_label = 'References'
     max_forms = 50
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, data=None, *args, **kwargs):
+        super().__init__(data, *args, **kwargs)
         self.max_forms = ReferenceFormSet.max_forms
         self.help_text = 'Numbered references specified in the metadata. Article citations must be in <a href=http://www.bibme.org/citation-guide/apa/ target=_blank>APA</a> format. Maximum of {}.'.format(self.max_forms)
+
+        # If user checked the "confirm reference order" box then they
+        # are confirming the order of references (as displayed in the
+        # form) is correct.  If user did not check that box, then do
+        # not touch the existing order.
+        if data and data.get('confirm_reference_order') == '1':
+            self.confirm_reference_order = True
+        else:
+            self.confirm_reference_order = False
 
     def clean(self):
         """
@@ -758,9 +753,26 @@ class ReferenceFormSet(BaseGenericInlineFormSet):
                 descriptions.append(description)
 
     def save(self, *args, **kwargs):
-        # change the value of order. set it as index of form
-        for form in self.forms:
-            form.instance.order = self.forms.index(form) + 1
+        if self.confirm_reference_order:
+            # If "confirm reference order" was checked, set the order
+            # of all references in the formset.
+            for form in self.forms:
+                form.instance.order = self.forms.index(form) + 1
+                form.changed_data = True
+        else:
+            # If "confirm reference order" was not checked, then set
+            # the order only for newly created references, leaving
+            # existing references alone.  New references should have
+            # "order" greater than any existing reference.
+            max_order = 0
+            for form in self.forms:
+                if form.instance.order is not None:
+                    max_order = max(max_order, form.instance.order)
+            for form in self.forms:
+                if form.instance.pk is None:
+                    form.instance.order = max_order + 1
+                    max_order += 1
+
         super().save(*args, **kwargs)
 
 
@@ -895,12 +907,22 @@ class AccessMetadataForm(forms.ModelForm):
             project_types=self.instance.resource_type,
             access_policy=self.access_policy
         )
-
-        if self.access_policy not in {AccessPolicy.CREDENTIALED, AccessPolicy.CONTRIBUTOR_REVIEW}:
+        # Open and restricted projects do not require training
+        if self.access_policy in {AccessPolicy.OPEN, AccessPolicy.RESTRICTED}:
             self.fields['required_trainings'].disabled = True
             self.fields['required_trainings'].required = False
             self.fields['required_trainings'].widget = forms.HiddenInput()
             self.initial['required_trainings'] = ''
+
+        # Credentialed and Contributor Review projects may or may not require training
+        if self.access_policy in {AccessPolicy.CREDENTIALED, AccessPolicy.CONTRIBUTOR_REVIEW}:
+            original_field = self.fields['required_trainings']
+            custom_field = CustomModelMultipleChoiceField(
+                queryset=original_field.queryset.order_by('name'),
+                required=True,
+                widget=original_field.widget
+            )
+            self.fields['required_trainings'] = custom_field
 
         if self.access_policy == AccessPolicy.OPEN:
             self.fields['dua'].disabled = True
@@ -911,6 +933,34 @@ class AccessMetadataForm(forms.ModelForm):
         if not self.editable:
             for field in self.fields.values():
                 field.disabled = True
+
+
+class CustomModelMultipleChoiceField(ModelMultipleChoiceField):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Add empty option to the widget
+        self.widget.choices = list(self.widget.choices)
+        if ('', 'No training required') not in self.widget.choices:
+            self.widget.choices.append(('', 'No training required'))
+
+    def clean(self, value):
+        # If 'No training required' is selected, return an empty list
+        if value == ['']:
+            return []
+
+        # If no selection is made or value is None, return an empty list
+        # (equivalent to 'No training required')
+        if not value:
+            return []
+
+        return super().clean(value)
+
+    def prepare_value(self, value):
+        # If the value is None or an empty list, return ['']
+        # to preselect 'No training required'
+        if value is None or value == []:
+            return ['']
+        return super().prepare_value(value)
 
 
 class AuthorCommentsForm(forms.Form):
@@ -1030,8 +1080,17 @@ class InvitationResponseForm(forms.ModelForm):
             raise forms.ValidationError(
                   'You are not invited.')
 
-        if cleaned_data['response'] and not cleaned_data.get('affiliation'):
-            raise forms.ValidationError('You must specify your affiliation.')
+        if cleaned_data['response']:
+            if self.user == self.instance.project.editor:
+                raise forms.ValidationError(
+                    'You must reassign this project to another editor '
+                    'before accepting an authorship invitation.'
+                )
+
+            if not cleaned_data.get('affiliation'):
+                raise forms.ValidationError(
+                    'You must specify your affiliation.'
+                )
 
         return cleaned_data
 
@@ -1052,14 +1111,16 @@ class AnonymousAccessLoginForm(forms.ModelForm):
 class DataAccessRequestForm(forms.ModelForm):
     class Meta:
         model = DataAccessRequest
-        fields = ('data_use_title', 'data_use_purpose', 'agree_dua')
+        fields = ('data_use_title', 'data_use_purpose', 'agree_dua', 'lay_summary')
         help_texts = {
             'data_use_title': """Title of the project you would like to use the data for""",
             'data_use_purpose': """Detailed description of the data use.""",
+            'lay_summary': """A non-technical summary of your project for non-specialized users."""
         }
         labels = {
             'data_use_title': 'Research Project Title',
-            'data_use_purpose': 'Research Project Details'
+            'data_use_purpose': 'Scientific Abstract​',
+            'lay_summary': 'Lay Summary ​'
         }
 
     agree_dua = forms.BooleanField(required=True)
@@ -1170,7 +1231,7 @@ class InviteDataAccessReviewerForm(forms.ModelForm):
         invitation = DataAccessRequestReviewer()
         if DataAccessRequestReviewer.objects.filter(reviewer=reviewer,
                                                     project=self.project).exists():
-            # updating existing row in case a revoked user gets readded again
+            # updating existing row in case a revoked user gets re-added again
             invitation = DataAccessRequestReviewer.objects.get(
                 reviewer=reviewer,
                 project=self.project)

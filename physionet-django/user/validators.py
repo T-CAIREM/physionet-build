@@ -1,4 +1,7 @@
 import re
+import requests
+import jwt
+import json
 
 from django.conf import settings
 from django.contrib.auth.validators import UnicodeUsernameValidator
@@ -59,7 +62,7 @@ class UsernameValidator(UnicodeUsernameValidator):
 def validate_name(value):
     """
     Only accept words that start with an alphabetical character followed by
-    alphanumeric characters incluiding spaces, underscores, hyphens, and apostrophes.
+    alphanumeric characters including spaces, underscores, hyphens, and apostrophes.
     """
     if not re.fullmatch(r'[^\W_0-9]([\w\' -])+', value):
         raise ValidationError('Letters, numbers, spaces, underscores, hyphens, and apostrophes only. Must begin with a letter.')
@@ -208,6 +211,7 @@ def validate_nan(value):
     if re.fullmatch(r'[0-9\-+()]*', value):
         raise ValidationError('Cannot be a number.')
 
+
 def validate_orcid_token(value):
     """
     Validation to verify the token returned during
@@ -215,6 +219,37 @@ def validate_orcid_token(value):
     """
     if not re.fullmatch(r'^[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$', value):
         raise ValidationError('ORCID token is not in expected format.')
+
+
+def validate_orcid_id_token(token):
+    """
+    When openid scope is enabled then ORCID returns
+    access_token and signed id_token, this function validates id_token signature
+    """
+
+    jwks_url = settings.ORCID_OPEN_ID_JWKS_URL
+    jwks = requests.get(jwks_url).json()
+    headers = jwt.get_unverified_header(token)
+
+    public_keys = {}
+    for jwk in jwks['keys']:
+        kid = jwk['kid']
+        public_keys[kid] = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+
+    rsa_key = public_keys[headers['kid']]
+    if rsa_key is None:
+        raise ValidationError('ORCID public RSA key is None.')
+
+    try:
+        jwt.decode(
+            token,
+            rsa_key,
+            algorithms=['RS256'],
+            audience=settings.ORCID_CLIENT_ID,
+            issuer=settings.ORCID_DOMAIN
+        )
+    except jwt.InvalidTokenError:
+        raise ValidationError('ORCID id_token is invalid.')
 
 def validate_orcid_id(value):
     """

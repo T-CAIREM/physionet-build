@@ -160,42 +160,11 @@ class ActiveProject(Metadata, UnpublishedProject, SubmissionInfo):
     # Subdirectory (under self.files.file_root) where files are stored
     FILE_STORAGE_SUBDIR = 'active-projects'
 
-    REQUIRED_FIELDS = (
-        # 0: Database
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'conflicts_of_interest', 'version', 'license',
-         'short_description'),
-        # 1: Software
-        ('title', 'abstract', 'background', 'content_description',
-         'usage_notes', 'installation', 'conflicts_of_interest', 'version',
-         'license', 'short_description'),
-        # 2: Challenge
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'conflicts_of_interest', 'version', 'license',
-         'short_description'),
-        # 3: Model
-        ('title', 'abstract', 'background', 'methods', 'content_description',
-         'usage_notes', 'installation', 'conflicts_of_interest', 'version',
-         'license', 'short_description'),
-    )
-
-    # Custom labels that don't match model field names
-    LABELS = (
-        # 0: Database
-        {'content_description': 'Data Description'},
-        # 1: Software
-        {'content_description': 'Software Description',
-         'methods': 'Technical Implementation',
-         'installation': 'Installation and Requirements'},
-        # 2: Challenge
-        {'background': 'Objective',
-         'methods': 'Participation',
-         'content_description': 'Data Description',
-         'usage_notes': 'Evaluation'},
-        # 3: Model
-        {'content_description': 'Model Description',
-         'methods': 'Technical Implementation',
-         'installation': 'Installation and Requirements'},
+    REQUIRED_META_FIELDS = (
+        'title',
+        'version',
+        'license',
+        'short_description',
     )
 
     SUBMISSION_STATUS_LABELS = {
@@ -338,16 +307,23 @@ class ActiveProject(Metadata, UnpublishedProject, SubmissionInfo):
                         'has not set a corresponding email')
 
         # Metadata
-        for attr in ActiveProject.REQUIRED_FIELDS[self.resource_type.id]:
+        for attr in ActiveProject.REQUIRED_META_FIELDS:
             value = getattr(self, attr)
-            text = unescape(strip_tags(str(value)))
-            if value is None or not text or text.isspace():
-                l = self.LABELS[self.resource_type.id][attr] if attr in self.LABELS[self.resource_type.id] else attr.title().replace('_', ' ')
-                self.integrity_errors.append('Missing required field: {0}'.format(l))
+            if not value:
+                label = attr.title().replace('_', ' ')
+                self.integrity_errors.append('Missing required field: {0}'.format(label))
 
-        # Ethics
-        if not self.ethics_statement:
-            self.integrity_errors.append('Missing required field: Ethics Statement')
+        # Required content sections
+        for section in self.content_sections():
+            if section.required:
+                text = unescape(strip_tags(section.body))
+                if not text or text.isspace():
+                    label = section.title
+                    self.integrity_errors.append('Missing required field: {0}'.format(label))
+
+        # References
+        if not self.has_valid_reference_order():
+            self.integrity_errors.append('Order of references may be incorrect')
 
         published_projects = self.core_project.publishedprojects.all()
         if published_projects:
@@ -369,6 +345,30 @@ class ActiveProject(Metadata, UnpublishedProject, SubmissionInfo):
             return False
         else:
             return True
+
+    def has_valid_reference_order(self):
+        """
+        Check whether order of references is valid.
+
+        Past bugs in the project editing forms can result in
+        references having 'order' set to None, or the order of 'order'
+        not matching the order displayed in the content/copyedit page.
+        It is impractical to repair all existing projects
+        automatically since that requires guessing the author's
+        intent.
+
+        Therefore, if a project's reference order is undefined or
+        inconsistent, we want to require the author or editor to
+        address it before the project can be submitted or published.
+        """
+        references = self.references.order_by('id')
+        order_list = [r.order for r in references]
+
+        for order1, order2 in zip(order_list, order_list[1:]):
+            if order1 is None or order2 is None or order1 >= order2:
+                return False
+
+        return True
 
     def is_submittable(self):
         """

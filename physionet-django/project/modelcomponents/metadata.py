@@ -414,18 +414,20 @@ class Metadata(models.Model):
             year = timezone.now().year
             doi = '10.13026/*****'
 
+        rrid_text = f"RRID:{settings.PLATFORM_RRID}." if settings.PLATFORM_RRID else ""
         shared_content = {'year': year,
                           'title': self.title,
                           'version': self.version,
-                          'platform_name': settings.SITE_NAME}
+                          'platform_name': settings.SITE_NAME,
+                          'rrid': rrid_text}
 
         if style == 'MLA':
 
             style_format = ('{author}. "{title}" (version {version}). '
-                            '<i>{platform_name}</i> ({year})')
+                            '<i>{platform_name}</i> ({year}). {rrid}')
 
-            doi_format = (', <a href="https://doi.org/{doi}">'
-                          'https://doi.org/{doi}</a>.')
+            doi_format = (' <a href="https://doi.org/{doi}">'
+                          'https://doi.org/{doi}</a>')
 
             if (len(authors) == 1):
                 all_authors = authors[0].get_full_name(reverse=True)
@@ -440,10 +442,10 @@ class Metadata(models.Model):
         elif style == 'APA':
 
             style_format = ('{author} ({year}). {title} (version '
-                            '{version}). <i>{platform_name}</i>')
+                            '{version}). <i>{platform_name}</i>. {rrid}')
 
-            doi_format = ('. <a href="https://doi.org/{doi}">'
-                          'https://doi.org/{doi}</a>.')
+            doi_format = (' <a href="https://doi.org/{doi}">'
+                          'https://doi.org/{doi}</a>')
 
             if (len(authors) == 1):
                 all_authors = authors[0].initialed_name()
@@ -465,10 +467,10 @@ class Metadata(models.Model):
         elif style == 'Chicago':
 
             style_format = ('{author}. "{title}" (version {version}). '
-                            '<i>{platform_name}</i> ({year})')
+                            '<i>{platform_name}</i> ({year}). {rrid}')
 
-            doi_format = ('. <a href="https://doi.org/{doi}">'
-                          'https://doi.org/{doi}</a>.')
+            doi_format = (' <a href="https://doi.org/{doi}">'
+                          'https://doi.org/{doi}</a>')
 
             if (len(authors) == 1):
                 all_authors = authors[0].get_full_name(reverse=True)
@@ -482,11 +484,11 @@ class Metadata(models.Model):
         elif style == 'Harvard':
 
             style_format = ("{author} ({year}) '{title}' (version "
-                            "{version}), <i>{platform_name}</i>")
+                            "{version}), <i>{platform_name}</i>. {rrid}")
 
-            doi_format = (". Available at: "
+            doi_format = (" Available at: "
                           "<a href='https://doi.org/{doi}'>"
-                          "https://doi.org/{doi}</a>.")
+                          "https://doi.org/{doi}</a>")
 
             if (len(authors) == 1):
                 all_authors = authors[0].initialed_name()
@@ -499,11 +501,11 @@ class Metadata(models.Model):
         elif style == 'Vancouver':
 
             style_format = ('{author}. {title} (version {version}). '
-                            '{platform_name}. {year}')
+                            '{platform_name}. {year}. {rrid}')
 
-            doi_format = ('. Available from: '
+            doi_format = (' Available from: '
                           '<a href="https://doi.org/{doi}">'
-                          'https://doi.org/{doi}</a>.')
+                          'https://doi.org/{doi}</a>')
 
             all_authors = ', '.join(a.initialed_name(commas=False,
                                     periods=False) for a in authors)
@@ -531,6 +533,63 @@ class Metadata(models.Model):
             citation_dict[style] = self.citation_text(style)
 
         return citation_dict
+
+    def content_sections(self):
+        """
+        Return a list of ContentSections that form the project description.
+
+        Each ContentSection contains a fixed header (defined by the
+        project type) and an author-editable body.  Some sections are
+        optional and the body is allowed to be empty, in which case
+        that section should be hidden.
+        """
+        headers = self.resource_type.content_section_headers()
+        return [ContentSection(header, self) for header in headers]
+
+
+class ContentSection:
+    """
+    Free-form HTML content that forms part of a project description.
+
+    A project description contains many sections (such as "Abstract",
+    "Background", and "Methods"), which follow a particular structure
+    that is defined for each project type.
+
+    A ContentSection object encapsulates the author-editable content
+    of the section (the "body") together with the fixed metadata (the
+    "header").  It has the following attributes:
+
+    - title: the human-readable title of the section
+
+    - html_id: the ID that may be used to link to the section
+
+    - required: True if the section is required (the project should
+      not be published if this section is missing)
+
+    - field_name: the name of the corresponding field in Metadata
+
+    - body: the author-editable content of the section
+
+    In the present implementation, every ContentSection corresponds to
+    a particular field of the ActiveProject or PublishedProject
+    instance (specifically, one of the fields defined in the Metadata
+    class.)  In the future, this structure may become dynamic and
+    site-configurable.
+    """
+    def __init__(self, header, project):
+        self.header = header
+        self.project = project
+        self.title = header.title
+        self.html_id = header.html_id
+        self.required = header.required
+        self.field_name = header.field_name
+
+    def __repr__(self):
+        return '<{}: {!r}>'.format(type(self).__name__, self.title)
+
+    @property
+    def body(self):
+        return getattr(self.project, self.field_name)
 
 
 class Topic(models.Model):

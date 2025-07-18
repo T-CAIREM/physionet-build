@@ -1,6 +1,3 @@
-html,body{height:100%; width: 100%;}
-html{ overflow: overlay; }
-
 /* Open in new window icon */
 a[target='_blank']::after {
   content: '\29C9';
@@ -98,7 +95,7 @@ th, td {
   color: white;
 }
 
-.navbar-check{
+input[type=checkbox].navbar-check{
   display: none;
 }
 
@@ -611,4 +608,10 @@ a, code{
    (https://github.com/MIT-LCP/physionet-build/issues/1764) */
 body .list-group-item:hover {
   z-index: auto;
+}
+
+/* tinymce modal dialog backdrop */
+body .tox .tox-dialog-wrap__backdrop {
+    background-color: #000; /* bootstrap: $modal-backdrop-bg */
+    opacity: 0.5;           /* bootstrap: $modal-backdrop-opacity */
 }

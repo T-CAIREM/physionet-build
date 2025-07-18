@@ -17,6 +17,7 @@ urlpatterns = [
     path("settings/cloud/", views.edit_cloud, name="edit_cloud"),
     path("settings/cloud/aws/", views.edit_cloud_aws, name="edit_cloud_aws"),
     path("settings/orcid/", views.edit_orcid, name="edit_orcid"),
+    path("settings/tokens/", views.edit_tokens, name="edit_tokens"),
     path("authorcid/", views.auth_orcid, name="auth_orcid"),
     path(
         "settings/credentialing/", views.edit_credentialing, name="edit_credentialing"
@@ -116,6 +117,20 @@ if not settings.ENABLE_SSO:
         ]
     )
 
+if settings.ORCID_LOGIN_ENABLED:
+    urlpatterns.extend(
+        [
+            path("authorcid_login/", views.auth_orcid_login, name="auth_orcid_login"),
+            path("orcid_init_login", views.orcid_init_login, name="orcid_init_login"),
+            path("orcid_register/", views.orcid_register, name="orcid_register"),
+            re_path(
+                r"^orcid_activate/(?P<uidb64>[0-9A-Za-z_\-]+)/(?P<token>[0-9A-Za-z]{1,13}-[0-9A-Za-z]{1,32})/$",
+                views.activate_orcid_user,
+                name="orcid_activate_user"
+            ),
+        ]
+    )
+
 # Parameters for testing URLs (see physionet/test_urls.py)
 TEST_DEFAULTS = {
     "_user_": "aewj",
@@ -136,4 +151,5 @@ TEST_CASES = {
     "reset_password_confirm": {"uidb64": "x", "token": "x", "_skip_": True},
     # Testing auth_orcid requires a mock oauth server.  Skip this URL.
     "auth_orcid": {"_skip_": True},
+    "auth_orcid_login": {"_skip_": True},
 }

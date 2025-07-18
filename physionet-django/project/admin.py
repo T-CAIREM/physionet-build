@@ -1,7 +1,5 @@
 from background_task.models import Task
 from background_task.models import CompletedTask
-from ckeditor.fields import RichTextField
-from ckeditor.widgets import CKEditorWidget
 from django.contrib import admin
 from django.db.models import CharField, TextField
 from django.forms import Textarea, TextInput
@@ -100,7 +98,6 @@ admin.site.register(models.ProgrammingLanguage)
 admin.site.register(models.Reference)
 admin.site.register(models.Topic)
 admin.site.register(models.Affiliation)
-admin.site.register(models.ArchivedProject)
 admin.site.register(models.Contact)
 admin.site.register(models.ContentType)
 admin.site.register(models.CopyeditLog)

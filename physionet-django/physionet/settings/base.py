@@ -35,6 +35,20 @@ PRIVACY_POLICY_HTML = config('PRIVACY_POLICY_HTML', default=None)
 GCS_SIGNED_URL_LIFETIME_IN_MINUTES = config('GCS_SIGNED_URL_LIFETIME_IN_MINUTES', default=1440, cast=int)
 
 
+# Tags for the ORCID API
+ORCID_DOMAIN = config('ORCID_DOMAIN', default='https://sandbox.orcid.org')
+ORCID_REDIRECT_URI = config('ORCID_REDIRECT_URI', default='http://127.0.0.1:8000/authorcid')
+ORCID_LOGIN_REDIRECT_URI = config('ORCID_LOGIN_REDIRECT_URI', default='http://127.0.0.1:8000/authorcid_login')
+ORCID_AUTH_URL = config('ORCID_AUTH_URL', default='https://sandbox.orcid.org/oauth/authorize')
+ORCID_TOKEN_URL = config('ORCID_TOKEN_URL', default='https://sandbox.orcid.org/oauth/token')
+ORCID_CLIENT_ID = config('ORCID_CLIENT_ID', default=False)
+ORCID_CLIENT_SECRET = config('ORCID_CLIENT_SECRET', default=False)
+ORCID_SCOPE = config('ORCID_SCOPE', default=False)
+ORCID_LOGIN_ENABLED = config('ORCID_LOGIN_ENABLED', default=False, cast=bool)
+ORCID_OPEN_ID_JWKS_URL = config('ORCID_OPEN_ID_JWKS_URL', default="https://sandbox.orcid.org/oauth/jwks")
+ORCID_LOGIN_BUTTON_TEXT = config('ORCID_LOGIN_BUTTON_TEXT', default="Log in using ORCID iD")
+
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -49,13 +63,14 @@ INSTALLED_APPS = [
     'django.contrib.sites',
     'django.contrib.redirects',
 
-    'ckeditor',
+    'tinymce',
     # 'django_cron',
     'django_q',
     'background_task',
     'rest_framework',
     'oauth2_provider',
     'corsheaders',
+    'mathjax',
 
     'training',
     'user',
@@ -151,6 +166,8 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 AUTHENTICATION_BACKENDS = ['user.backends.DualAuthModelBackend']
+if ORCID_LOGIN_ENABLED:
+    AUTHENTICATION_BACKENDS.append('user.backends.OrcidAuthBackend')
 
 if ENABLE_SSO:
     AUTHENTICATION_BACKENDS += ['sso.auth.RemoteUserBackend']
@@ -201,7 +218,7 @@ MAX_ATTEMPTS = 5
 
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [os.path.join(BASE_DIR,'static')]
-# Google Storge service account credentials
+# Google Storage service account credentials
 if config('GOOGLE_APPLICATION_CREDENTIALS', default=None):
     GOOGLE_APPLICATION_CREDENTIALS = os.path.join(
         BASE_DIR,
@@ -262,6 +279,9 @@ S3_OPEN_ACCESS_BUCKET = config('S3_OPEN_ACCESS_BUCKET', default=None)
 # Bucket name to store logs and metrics related to project usage.
 S3_SERVER_ACCESS_LOG_BUCKET = config('S3_SERVER_ACCESS_LOG_BUCKET', default=None)
 
+# Bucket name for the S3 bucket containing the controlled access data
+S3_CONTROLLED_ACCESS_BUCKET = config('S3_CONTROLLED_ACCESS_BUCKET', default=None)
+
 # Header tags for the AWS lambda function that grants access to S3 storage
 AWS_HEADER_KEY = config('AWS_KEY', default=False)
 AWS_HEADER_VALUE = config('AWS_VALUE', default=False)
@@ -277,15 +297,6 @@ DATACITE_API_URL = config('DATACITE_API_URL', default='https://api.test.datacite
 DATACITE_PREFIX = config('DATACITE_PREFIX', default='')
 DATACITE_USER = config('DATACITE_USER', default='')
 DATACITE_PASS = config('DATACITE_PASS', default='')
-
-# Tags for the ORCID API
-ORCID_DOMAIN = config('ORCID_DOMAIN', default='https://sandbox.orcid.org')
-ORCID_REDIRECT_URI = config('ORCID_REDIRECT_URI', default='http://127.0.0.1:8000/authorcid')
-ORCID_AUTH_URL = config('ORCID_AUTH_URL', default='https://sandbox.orcid.org/oauth/authorize')
-ORCID_TOKEN_URL = config('ORCID_TOKEN_URL', default='https://sandbox.orcid.org/oauth/token')
-ORCID_CLIENT_ID = config('ORCID_CLIENT_ID', default=False)
-ORCID_CLIENT_SECRET = config('ORCID_CLIENT_SECRET', default=False)
-ORCID_SCOPE = config('ORCID_SCOPE', default=False)
 
 # Tags for the CITISOAPService API
 CITI_USERNAME = config('CITI_USERNAME', default='')
@@ -420,46 +431,121 @@ _math_classes = [
     'MJX-tex-oldstyle-bold', 'MJX-tex-mathit',
 ]
 
-CKEDITOR_CONFIGS = {
+HTML_ALLOWED_CONTENT = {
     'default': {
-        'toolbar': 'Custom',
-        'toolbar_Custom': [
-            ['Format'],
-            ['Bold', 'Italic', 'Underline', 'Blockquote'],
-            ['NumberedList', 'BulletedList'],
-            ['InlineEquation', 'BlockEquation', 'CodeSnippet', 'Table'],
-            ['Link', 'Unlink'],
-            ['RemoveFormat', 'Source'],
-        ],
-        'removeDialogTabs': 'link:advanced',
-        'disableNativeSpellChecker': False,
-        'width': '100%',
-        'autosave': {'messageType': 'no'},
+        **_inline_tags,
+        **_block_tags,
+        **_math_tags,
+        'h3': True,
+        'h4': True,
+        'h5': True,
+        'h6': True,
+        'img': {'attributes': ['src', 'alt', 'width', 'height']},
+        '*': {'attributes': _generic_attributes,
+              'classes': _math_classes},
+    },
+}
 
-        # Show options "Heading 2" to "Heading 4" in the format menu,
-        # but map these to <h3>, <h4>, <h5> tags
-        'format_tags': 'p;h2;h3;h4',
-        'format_h2': {'element': 'h3'},
-        'format_h3': {'element': 'h4'},
-        'format_h4': {'element': 'h5'},
+# User interface settings for TinyMCE
 
-        'extraPlugins': 'codesnippet,pnmathml,autosave',
-        'allowedContent': {
-            **_inline_tags,
-            **_block_tags,
-            **_math_tags,
-            'h3': True,
-            'h4': True,
-            'h5': True,
-            'h6': True,
-            'img': {'attributes': ['src', 'alt', 'width', 'height']},
-            '*': {'attributes': _generic_attributes,
-                  'classes': _math_classes},
-        },
-        'mathJaxLib': ('/static/mathjax/MathJax.js'
-                       '?config=TeX-AMS-MML_HTMLorMML-full'),
-    }
+TINYMCE_DEFAULT_CONFIG = {
+    "theme": "silver",
+    "min_height": 300,
+    "menubar": False,
+    "toolbar_mode": "sliding",
+    "toolbar_sticky": True,
+    "browser_spellcheck": True,
+    "contextmenu": "table",
+    "link_context_toolbar": True,
+    "mobile": {
+        "max_height": 300,
+    },
 
+    "plugins": ",".join([
+        "autoresize",
+        "autosave",
+        "code",
+        "fullscreen",
+        "help",
+        "link",
+        "lists",
+        "searchreplace",
+        "table",
+    ]),
+    "external_plugins": {
+        "pnmath": "/static/tinymce-plugins/pnmath.js",
+        "codetag": "/static/tinymce-plugins/codetag.js",
+    },
+
+    "pnmath_mathjax_url": "/static/mathjax/es5/",
+
+    "toolbar": (
+        "undo redo | styles | "
+        "bold italic codetag math | "
+        "numlist bullist table | "
+        "searchreplace code restoredraft"
+    ),
+
+    "table_header_type": "sectionCells",
+    "table_resize_bars": False,
+    "table_appearance_options": False,
+    "table_advtab": False,
+    "table_row_advtab": False,
+    "table_cell_advtab": False,
+    "table_toolbar": (
+        "alignleft aligncenter alignright | "
+        "tablerowprops tableinsertrowbefore tableinsertrowafter "
+        "tabledeleterow | "
+        "tableinsertcolbefore tableinsertcolafter tabledeletecol | "
+        "tablecaption | tabledelete"
+    ),
+
+    "content_css": "/static/custom/css/richtext.css",
+
+    "text_patterns": [
+        {"start": "*", "end": "*", "format": "italic"},
+        {"start": "**", "end": "**", "format": "bold"},
+        {"start": "`", "end": "`", "format": "code"},
+        {"start": "#", "format": "h3"},
+        {"start": "##", "format": "h3"},
+        {"start": "###", "format": "h3"},
+        {"start": "####", "format": "h4"},
+        {"start": "#####", "format": "h5"},
+        {"start": "######", "format": "h6"},
+        {"start": "1. ", "cmd": "InsertOrderedList"},
+        {"start": "* ", "cmd": "InsertUnorderedList"},
+        {"start": "- ", "cmd": "InsertUnorderedList"},
+        {"start": "$", "end": "$", "cmd": "InlineMath"},
+        {"start": "$$", "end": "$$", "cmd": "BlockMath"},
+        {"start": r"\(", "end": r"\)", "cmd": "InlineMath"},
+        {"start": r"\[", "end": r"\]", "cmd": "BlockMath"},
+    ],
+
+    "formats": {
+        "underline": {"inline": "u"},
+    },
+
+    "style_formats": [
+        {"title": "Headings", "items": [
+            {"title": "Heading 3", "format": "h3"},
+            {"title": "Heading 4", "format": "h4"},
+            {"title": "Heading 5", "format": "h5"},
+            {"title": "Heading 6", "format": "h6"},
+        ]},
+        {"title": "Inline", "items": [
+            {"title": "Bold", "format": "bold"},
+            {"title": "Italic", "format": "italic"},
+            {"title": "Underline", "format": "underline"},
+            {"title": "Superscript", "format": "superscript"},
+            {"title": "Subscript", "format": "subscript"},
+            {"title": "Code", "format": "code"},
+        ]},
+        {"title": "Blocks", "items": [
+            {"title": "Paragraph", "format": "p"},
+            {"title": "Blockquote", "format": "blockquote"},
+            {"title": "Code Block", "format": "pre"},
+        ]},
+    ],
 }
 
 # True if the program is invoked as 'manage.py test'
@@ -592,7 +678,7 @@ if os.getenv('PHYSIONET_LOCK_FILE'):
                       os.O_RDWR | os.O_CREAT, 0o660)
     # Note that Python has at least three different ways of locking
     # files.  We want fcntl.flock (i.e. flock(2)), which is tied to
-    # the file desciptor and inherited by child processes.  In
+    # the file descriptor and inherited by child processes.  In
     # contrast, fcntl.lockf uses fcntl(2) and os.lockf uses lockf(3),
     # both of which are tied to the PID.
     fcntl.flock(_lockfd, fcntl.LOCK_SH)
@@ -635,6 +721,11 @@ LOG_TIMEDELTA = config('LOG_TIMEDELTA', cast=int, default='10')
 # Ticket system for user support
 TICKET_SYSTEM_URL = config('TICKET_SYSTEM_URL', default=None)
 
+# Platform Research Resource Identifier: https://rrid.site/
+# Added to citations to support tracking of reuse.
+# e.g. PhysioNet is "SCR_007345"
+PLATFORM_RRID = config('PLATFORM_RRID', default=None)
+
 #  Platform wide citation config
 PLATFORM_WIDE_CITATION = {
     'APA': config('PLATFORM_WIDE_CITATION_APA', default=None),
@@ -671,3 +762,20 @@ ALLOWED_ACCESS_POLICIES = config(
     'ALLOWED_ACCESS_POLICIES',
     default='OPEN,RESTRICTED,CREDENTIALED,CONTRIBUTOR_REVIEW'
 ).split(',')
+
+# OAUTH_CLIENT_APP_NAME is the name of the default OAuth application used
+# when programmatically generating access tokens (e.g., via the /settings/tokens).
+OAUTH_CLIENT_APP_NAME = config('OAUTH_CLIENT_APP_NAME', default='')
+
+# OAUTH PROVIDER SCOPES
+OAUTH2_PROVIDER = {
+    "SCOPES": {
+        "profile:read": "Read access to user's profile (username, full name)",
+        "email:read": "Read access to user's email address",
+        "institution:read": "Read access to user's institutional affiliation",
+        "credentialing:read": "Read access to user's credentialing and training status",
+        "orcid:read": "Read access to user's ORCID iD",
+        "public_id:read": "Read access to the user's persistent public ID",
+        "data:download": "Download project data if token-holder is approved for access (training, DUA, etc).",
+    }
+}

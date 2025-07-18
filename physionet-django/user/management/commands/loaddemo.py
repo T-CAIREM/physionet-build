@@ -19,6 +19,7 @@ from physionet.utility import get_project_apps
 
 from user.models import Training, TrainingType, TrainingQuestion, CredentialApplication
 from user.enums import TrainingStatus
+from user.management.commands import create_default_oauth_app
 
 
 class Command(BaseCommand):
@@ -72,6 +73,10 @@ class Command(BaseCommand):
         if os.path.exists(ORIGINAL_DBCAL_FILE):
             os.symlink(ORIGINAL_DBCAL_FILE, DBCAL_FILE)
 
+        # Add OAuth application for managing user-generated OAuth tokens
+        create_default_oauth_app.create_default_oauth_application()
+
+
 def find_demo_fixtures(project_apps):
     """
     Find non-empty demo fixtures
@@ -99,13 +104,17 @@ def copy_demo_media():
     for subdir in os.listdir(demo_media_root):
         demo_subdir = os.path.join(demo_media_root, subdir)
         target_subdir = os.path.join(settings.MEDIA_ROOT, subdir)
+        os.makedirs(target_subdir, exist_ok=True)
         for item in [i for i in os.listdir(demo_subdir) if i != '.gitkeep']:
             path = os.path.join(demo_subdir, item)
             if os.path.isdir(path):
                 shutil.copytree(os.path.join(demo_subdir, item),
-                                os.path.join(target_subdir, item))
+                                os.path.join(target_subdir, item),
+                                ignore=shutil.ignore_patterns('.gitkeep'),
+                                dirs_exist_ok=True)
             else:
-                shutil.copy(path, target_subdir)
+                shutil.copy(os.path.join(demo_subdir, item),
+                            os.path.join(target_subdir, item))
 
     # Published project files should have been made read-only at
     # the time of publication
@@ -134,7 +143,9 @@ def copy_demo_static():
 
         for item in [i for i in os.listdir(demo_subdir) if i != '.gitkeep']:
             shutil.copytree(os.path.join(demo_subdir, item),
-                            os.path.join(target_subdir, item))
+                            os.path.join(target_subdir, item),
+                            ignore=shutil.ignore_patterns('.gitkeep'),
+                            dirs_exist_ok=True)
 
     # Published project files should have been made read-only at
     # the time of publication

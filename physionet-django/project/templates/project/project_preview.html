@@ -98,22 +98,7 @@
 
       {% include "project/citation_box.html" %}
 
-      {# 0: Database #}
-      {% if project.resource_type.id == 0 %}
-        {% include "project/database_content_preview.html" %}
-      {# 1: Software #}
-      {% elif project.resource_type.id == 1 %}
-        {% include "project/software_content_preview.html" %}
-      {# 2: Challenge #}
-      {% elif project.resource_type.id == 2 %}
-        {% include "project/challenge_content_preview.html" %}
-      {# 3: Model #}
-      {% elif project.resource_type.id == 3 %}
-        {% include "project/model_content_preview.html" %}
-      {# Other #}
-      {% else %}
-        {% include "project/software_content_preview.html" %}
-      {% endif %}
+      {% include "project/project_preview_content.html" %}
     </div>
     <!-- /.main column -->
 
@@ -165,10 +150,14 @@
           {% if project.access_policy == AccessPolicy.CREDENTIALED or project.access_policy == AccessPolicy.CONTRIBUTOR_REVIEW %}
             <p>
               <strong>Required training:</strong>
-              {% for training in project.required_trainings.all %}
-                <br>
-                <a href="{% url 'project_required_trainings_preview' project.slug %}#{{ training.id }}">{{ training }}</a>
-              {% endfor%}
+              {% if project.required_trainings.all|length > 0 %}
+                {% for training in project.required_trainings.all %}
+                  <br>
+                  <a href="{% url 'project_required_trainings_preview' project.slug %}#{{ training.id }}">{{ training }}</a>
+                {% endfor %}
+              {% else %}
+                <br>No training required
+              {% endif %}
             </p>
           {% endif %}
         </div>

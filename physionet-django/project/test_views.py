@@ -1,5 +1,6 @@
 
 import base64
+import html.parser
 import os
 from http import HTTPStatus
 import json
@@ -39,6 +40,26 @@ def _basic_auth(username, password, encoding='UTF-8'):
     token = username + ':' + password
     token = base64.b64encode(token.encode(encoding)).decode()
     return 'Basic ' + token
+
+
+def _parse_html_form_fields(content):
+    """
+    Parse HTML and return all form fields as a dictionary.
+
+    Note that this currently only handles input elements, not other
+    form elements such as select or textarea.  It also makes no
+    distinction between multiple forms.
+    """
+    fields = {}
+
+    class Parser(html.parser.HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'input' and 'name' in attrs:
+                fields[attrs['name']] = attrs.get('value', '')
+
+    Parser().feed(content)
+    return fields
 
 
 class TestAccessPresubmission(TestMixin):
@@ -500,9 +521,10 @@ class TestProjectEditing(TestCase):
             'project-reference-content_type-object_id-INITIAL_FORMS': '0',
             'project-reference-content_type-object_id-MIN_NUM_FORMS': '0',
             'project-reference-content_type-object_id-MAX_NUM_FORMS': '0',
+            'title': project.title,
         }
-        for field in ContentForm.FIELDS[project.resource_type.id]:
-            data[field] = getattr(project, field)
+        for section in project.content_sections():
+            data[section.field_name] = section.body
 
         response = self.client.post(content_url, data=data)
         self.assertEqual(response.status_code, 200)
@@ -557,6 +579,55 @@ class TestProjectEditing(TestCase):
         self.assertEqual(response.status_code, 200)
         project.refresh_from_db()
         self.assertFalse(project.is_submittable())
+
+    def test_reference_order(self):
+        """
+        Test handling of references with invalid order.
+        """
+        self.client.login(username=self.AUTHOR, password=self.PASSWORD)
+
+        project = ActiveProject.objects.get(title=self.PROJECT_TITLE)
+        self.assertEqual(project.references.count(), 0)
+        self.assertTrue(project.is_submittable())
+
+        # References with distinct order values are okay.
+        ref1 = project.references.create(description="asdf", order=1)
+        ref2 = project.references.create(description="ghjk", order=2)
+        self.assertTrue(project.is_submittable())
+
+        # Same order value for two references is an error.
+        ref1.order = 2
+        ref1.save()
+        self.assertFalse(project.is_submittable())
+
+        # Order value of None is an error.
+        ref2.order = None
+        ref2.save()
+        self.assertFalse(project.is_submittable())
+
+        content_url = reverse('project_content', args=(project.slug,))
+        response = self.client.get(content_url)
+        data = _parse_html_form_fields(response.content.decode())
+
+        # Try submitting form without confirm_reference_order.
+        # Existing order values should be unchanged.
+        data.pop('confirm_reference_order', None)
+        response = self.client.post(content_url, data=data)
+        ref1.refresh_from_db()
+        self.assertEqual(ref1.order, 2)
+        ref2.refresh_from_db()
+        self.assertEqual(ref2.order, None)
+        self.assertFalse(project.is_submittable())
+
+        # Try submitting form with confirm_reference_order.
+        # Order values should be unique.
+        data['confirm_reference_order'] = '1'
+        response = self.client.post(content_url, data=data)
+        ref1.refresh_from_db()
+        self.assertEqual(ref1.order, 1)
+        ref2.refresh_from_db()
+        self.assertEqual(ref2.order, 2)
+        self.assertTrue(project.is_submittable())
 
 
 class TestProjectTransfer(TestCase):
@@ -1062,6 +1133,7 @@ class TestSelfManagedProjectWorkflows(TestMixin):
                              data={
                                  'proj-data_use_purpose': msg_purpose,
                                  'proj-data_use_title': 'example title',
+                                 'proj-lay_summary': 'example lay summary',
                                  'proj-agree_dua': ['on']})
 
             da_req = DataAccessRequest.objects.filter(
@@ -1280,22 +1352,22 @@ class TestGenerateSignedUrl(TestMixin):
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename without a leading slash returns a bad reqeust.'):
+        with self.subTest('A filename without a leading slash returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_3, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename with  leading slashes returns a bad reqeust.'):
+        with self.subTest('A filename with  leading slashes returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_4, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename with a trailing slash returns a bad reqeust.'):
+        with self.subTest('A filename with a trailing slash returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_5, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename with an empty segment returns a bad reqeust.'):
+        with self.subTest('A filename with an empty segment returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_6, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)

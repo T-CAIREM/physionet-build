@@ -7,7 +7,8 @@ import django.contrib.auth.views as auth_views
 import pytz
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import login
+from django.contrib.auth import login as auth_login
+from django.contrib.auth import authenticate
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import PasswordResetForm
 from django.contrib.auth.tokens import default_token_generator
@@ -35,6 +36,8 @@ from notification.utility import (
     training_application_request,
 )
 from oauthlib.oauth2.rfc6749.errors import InvalidGrantError
+from oauth2_provider.models import get_application_model, AccessToken
+
 from physionet import utility
 from physionet.middleware.maintenance import (
     ServiceUnavailable,
@@ -44,6 +47,8 @@ from physionet.middleware.maintenance import (
 from physionet.models import Section
 from physionet.settings.base import StorageTypes
 from project.models import Author, DUASignature, DUA, PublishedProject
+from training.forms import CourseForm
+from training.models import Course
 from requests_oauthlib import OAuth2Session
 from user import forms, validators
 from user.awsverification import aws_verification_available
@@ -60,6 +65,7 @@ from user.models import (
     TrainingType,
 )
 from user.userfiles import UserFiles
+from user.enums import RequiredField, ActivateUserType
 from physionet.models import StaticPage
 from django.db.models import F
 
@@ -71,6 +77,15 @@ class LoginView(auth_views.LoginView):
     template_name = 'user/login.html'
     authentication_form = forms.LoginForm
     redirect_authenticated_user = True
+
+    def get_context_data(self, *args, **kwargs):
+        context = super().get_context_data(*args, **kwargs)
+
+        orcid_extra_context = {
+            'enable_orcid_login': settings.ORCID_LOGIN_ENABLED,
+            'orcid_login_button_text': settings.ORCID_LOGIN_BUTTON_TEXT,
+        }
+        return {**context, **orcid_extra_context}
 
 
 @method_decorator(allow_post_during_maintenance, 'dispatch')
@@ -89,7 +104,9 @@ class SSOLoginView(auth_views.LoginView):
 
         sso_extra_context = {
             'sso_login_button_text': settings.SSO_LOGIN_BUTTON_TEXT,
+            'orcid_login_button_text': settings.ORCID_LOGIN_BUTTON_TEXT,
             'login_instruction_sections': instruction_sections,
+            'enable_orcid_login': settings.ORCID_LOGIN_ENABLED,
         }
         return {**context, **sso_extra_context}
 
@@ -221,7 +238,7 @@ def activate_user(request, uidb64, token):
 
 def check_legacy_credentials(user, email):
     """
-    Check whether a user has already beeen credentialed on the old pn
+    Check whether a user has already been credentialed on the old pn
     site. If so, credential their account and mark the migration.
     """
     legacy_credential = LegacyCredential.objects.filter(email=email,
@@ -239,6 +256,7 @@ def check_legacy_credentials(user, email):
         legacy_credential.migrated_user = user
         legacy_credential.save()
         user.save()
+
 
 def remove_email(request, email_id):
     "Remove a non-primary email associated with a user"
@@ -293,8 +311,10 @@ def set_public_email(request, public_email_form):
             else:
                 messages.success(request, 'Your email: {0} has been set to private.'.format(current_public_email.email))
 
+
 def add_email(request, add_email_form):
     user = request.user
+    # noinspection GrazieInspection
     if add_email_form.is_valid():
         token = get_random_string(20)
         associated_email = AssociatedEmail.objects.create(user=user,
@@ -316,6 +336,7 @@ def add_email(request, add_email_form):
         send_mail(subject, body, settings.DEFAULT_FROM_EMAIL,
             [add_email_form.cleaned_data['email']], fail_silently=False)
         messages.success(request, 'A verification link has been sent to: {0}'.format(associated_email.email))
+
 
 @login_required
 def edit_emails(request):
@@ -408,6 +429,52 @@ def edit_profile(request):
 
     return render(request, 'user/edit_profile.html', {'form':form})
 
+
+@login_required
+def edit_tokens(request):
+    """
+    View for users to manage their personal API access tokens.
+
+    - POST: Creates a new access token with default read scopes.
+    - GET with `?delete=<id>`: Deletes an access token.
+    - GET: Lists current active tokens.
+    """
+    Application = get_application_model()
+
+    # Creating tokens requires a local OAUTH client to exist.
+    app_name = getattr(settings, "OAUTH_CLIENT_APP_NAME", None)
+    if not app_name:
+        raise Exception("OAUTH_CLIENT_APP_NAME is not defined in settings.")
+
+    try:
+        application = Application.objects.get(name=app_name)
+    except Application.DoesNotExist:
+        raise Exception(f"OAuth application named '{app_name}' not found.")
+
+    if request.method == "POST":
+
+        if AccessToken.objects.filter(user=request.user, application=application).count() >= 3:
+            messages.error(request, "You can only have up to 3 tokens. Please delete one first.")
+            return redirect("edit_tokens")
+
+        expires_at = timezone.now() + timedelta(days=60)
+        AccessToken.objects.create(
+            user=request.user,
+            application=application,
+            token=get_random_string(40),
+            expires=expires_at,
+            scope="data:download",
+        )
+        return redirect("edit_tokens")
+
+    if request.GET.get("delete"):
+        AccessToken.objects.filter(user=request.user, id=request.GET["delete"]).delete()
+        return redirect("edit_tokens")
+
+    tokens = AccessToken.objects.filter(user=request.user)
+    return render(request, "user/edit_tokens.html", {"tokens": tokens})
+
+
 @login_required
 def edit_orcid(request):
     """
@@ -455,7 +522,6 @@ def auth_orcid(request):
     """
 
     client_id = settings.ORCID_CLIENT_ID
-    client_secret = settings.ORCID_CLIENT_SECRET
     redirect_uri = settings.ORCID_REDIRECT_URI
     scope = list(settings.ORCID_SCOPE.split(","))
     oauth = OAuth2Session(client_id, redirect_uri=redirect_uri,
@@ -463,22 +529,19 @@ def auth_orcid(request):
     params = request.GET.copy()
     code = params['code']
 
-    try:
-        token = oauth.fetch_token(settings.ORCID_TOKEN_URL, code=code,
-                                  include_client_id=True, client_secret=client_secret)
-        try:
-            validators.validate_orcid_token(token['access_token'])
-            token_valid = True
-        except ValidationError:
-            messages.error(request, 'Validation Error: ORCID token validation failed.')
-            token_valid = False
-    except InvalidGrantError:
-        messages.error(request, 'Invalid Grant Error: authorization code may be expired or invalid.')
-        token_valid = False
+    token_valid, token = _fetch_and_validate_token(request, code, oauth)
 
     if token_valid:
-        orcid_profile, _ = Orcid.objects.get_or_create(user=request.user)
-        orcid_profile.orcid_id = token.get('orcid')
+        orcid_id = token.get('orcid')
+        orcid_profile = Orcid.objects.filter(orcid_id=orcid_id).first()
+        if orcid_profile and orcid_profile.user != request.user:
+            messages.error(request, 'This ORCID account is already in use by another account!')
+            return redirect('edit_orcid')
+
+        if orcid_profile is None:
+            orcid_profile, _ = Orcid.objects.get_or_create(user=request.user)
+
+        orcid_profile.orcid_id = orcid_id
         orcid_profile.name = token.get('name')
         orcid_profile.access_token = token.get('access_token')
         orcid_profile.refresh_token = token.get('refresh_token')
@@ -489,6 +552,171 @@ def auth_orcid(request):
         orcid_profile.save()
 
     return redirect('edit_orcid')
+
+
+@disallow_during_maintenance
+def auth_orcid_login(request):
+    """
+    Gets a users iD and token information from an ORCID redirect URI after their authorization. Saves the iD and other
+    token information. Logs user in if the account already exists or redirects to register form. The access_token /
+    refresh_token can be used to make token exchanges for additional information in the users account.  Public
+    information can be read without access to the member API at ORCID. Limited access information requires an
+    institution account with ORCID for access to the member API. The member API can also be used to add new
+    information to a users ORCID profile (ex: a PhysioNet dataset project).  See the .env file for an example of how to
+    do token exchanges.
+    """
+    if not settings.ORCID_LOGIN_ENABLED:
+        return redirect('home')
+
+    client_id = settings.ORCID_CLIENT_ID
+    redirect_uri = settings.ORCID_LOGIN_REDIRECT_URI
+    scope = list(settings.ORCID_SCOPE.split(","))
+    oauth = OAuth2Session(client_id, redirect_uri=redirect_uri, scope=scope)
+    params = request.GET.copy()
+    code = params['code']
+
+    token_valid, token = _fetch_and_validate_token(request, code, oauth)
+
+    if token_valid:
+        orcid_id = token.get('orcid')
+        orcid_profile = Orcid.objects.filter(orcid_id=orcid_id).first()
+
+        if orcid_profile is None:
+            request.session['orcid_token'] = token
+            return redirect('orcid_register')
+
+        user = authenticate(orcid_profile=orcid_profile)
+        if user is None:
+            return render(
+                request,
+                'user/register_done.html',
+                {'email': orcid_profile.user.email, 'sso': False},
+            )
+
+        auth_login(request, user, backend='user.backends.OrcidAuthBackend')
+
+    return redirect('login')
+
+
+def _fetch_and_validate_token(request, code, oauth_session):
+    """
+    Exchange code retrieved from ORCID for token and validate it
+    """
+    try:
+        client_secret = settings.ORCID_CLIENT_SECRET
+        token = oauth_session.fetch_token(
+            settings.ORCID_TOKEN_URL,
+            code=code,
+            include_client_id=True,
+            client_secret=client_secret,
+        )
+
+        try:
+            validators.validate_orcid_token(token['access_token'])
+            if settings.ORCID_LOGIN_ENABLED:
+                validators.validate_orcid_id_token(token['id_token'])
+
+            return True, token
+        except ValidationError as e:
+            logger.error(f'Validation Error: ORCID token validation failed. Error message: {e.message}')
+            messages.error(request, 'Validation Error: ORCID token validation failed.')
+    except InvalidGrantError:
+        messages.error(
+            request,
+            'Invalid Grant Error: authorization code may be expired or invalid.',
+        )
+
+    return False, None
+
+
+@disallow_during_maintenance
+def orcid_register(request):
+    """
+    ORCID Registration view
+    GET renders the registration form.
+    POST submits the registration form.
+    """
+    if not settings.ORCID_LOGIN_ENABLED:
+        return redirect('home')
+
+    user = request.user
+    if user.is_authenticated:
+        return redirect('project_home')
+
+    if request.method == 'POST':
+        form = forms.OrcidRegistrationForm(
+            request.POST, orcid_token=request.session['orcid_token']
+        )
+
+        if form.is_valid():
+            user = form.save()
+            uidb64 = force_str(urlsafe_base64_encode(force_bytes(user.pk)))
+            token = default_token_generator.make_token(user)
+            notify_account_registration(request, user, uidb64, token, activation_type=ActivateUserType.ORCID)
+
+            return render(
+                request, 'user/register_done.html', {'email': user.email, 'sso': settings.ENABLE_SSO}
+            )
+    else:
+        form = forms.OrcidRegistrationForm()
+
+    return render(request, 'user/orcid_register.html', {'form': form})
+
+
+@disallow_during_maintenance
+def orcid_init_login(request):
+    """
+    Builds redirect url and redirects to ORCID authorization page
+    """
+    if not settings.ORCID_LOGIN_ENABLED:
+        return redirect('home')
+
+    client_id = settings.ORCID_CLIENT_ID
+    redirect_uri = settings.ORCID_LOGIN_REDIRECT_URI
+    scope = settings.ORCID_SCOPE
+    auth_url = settings.ORCID_AUTH_URL
+
+    return redirect(
+        f'{auth_url}?response_type=code&redirect_uri={redirect_uri}&client_id={client_id}&scope={scope}'
+    )
+
+
+@disallow_during_maintenance
+def activate_orcid_user(request, uidb64, token):
+    """Orcid Registration view
+
+    This view activates user and initiate orcid log in flow automatically.
+    """
+    if not settings.ORCID_LOGIN_ENABLED:
+        return redirect('home')
+
+    context = {'title': 'Invalid Activation Link', 'isvalid': False}
+
+    try:
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=uid)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+
+    if user and user.is_active:
+        messages.success(request, 'The account is active.')
+        return redirect('login')
+
+    if default_token_generator.check_token(user, token):
+        with transaction.atomic():
+            user.is_active = True
+            user.save()
+            email = user.associated_emails.first()
+            email.verification_date = timezone.now()
+            email.is_verified = True
+            email.save()
+            logger.info('User activated - {0}'.format(user.email))
+            messages.success(request, 'The account has been activated.')
+
+        return redirect('orcid_init_login')
+
+    return render(request, 'user/activate_user_complete.html', context)
+
 
 @login_required
 def edit_password_complete(request):
@@ -556,7 +784,7 @@ def register(request):
                 uidb64 = force_str(urlsafe_base64_encode(force_bytes(
                     user.pk)))
                 token = default_token_generator.make_token(user)
-                notify_account_registration(request, user, uidb64, token)
+                notify_account_registration(request, user, uidb64, token, activation_type=ActivateUserType.DEFAULT)
 
             return render(request, 'user/register_done.html', {
                 'email': user.email})
@@ -748,11 +976,19 @@ def edit_training(request):
         ticket_system_url = None
 
     if request.method == "POST":
+        if len(request.FILES) == 0 and request.POST.get("training_type") is not None:
+            training_slug = TrainingType.objects.get(
+                id=request.POST.get("training_type")
+            ).slug
+            return redirect("platform_training", training_slug)
         training_form = forms.TrainingForm(
             user=request.user,
             data=request.POST,
             files=request.FILES,
             training_type=request.POST.get("training_type"),
+        )
+        take_course_form = CourseForm(
+            data=request.POST, training_type=request.POST.get("training_type"), auto_id="op_%s"
         )
         if training_form.is_valid():
             training_form.save()
@@ -761,15 +997,25 @@ def edit_training(request):
             training_form = forms.TrainingForm(user=request.user)
         else:
             messages.error(request, "Invalid submission. Check the errors below.")
-
     else:
         training_type = request.GET.get("trainingType")
+        take_course_form = None
         if training_type:
             training_form = forms.TrainingForm(
                 user=request.user, training_type=training_type
             )
+            if Course.objects.filter(
+                    training_type__required_field=RequiredField.PLATFORM,
+                    is_active=True
+            ).exists():
+                take_course_form = CourseForm(training_type=training_type, auto_id="op_%s")
         else:
             training_form = forms.TrainingForm(user=request.user)
+            if Course.objects.filter(
+                    training_type__required_field=RequiredField.PLATFORM,
+                    is_active=True
+            ).exists():
+                take_course_form = CourseForm(auto_id="op_%s")
 
         expiring_trainings = Training.objects.filter(
             user=request.user,
@@ -787,7 +1033,7 @@ def edit_training(request):
     return render(
         request,
         "user/edit_training.html",
-        {"training_form": training_form, "ticket_system_url": ticket_system_url},
+        {"training_form": training_form, "ticket_system_url": ticket_system_url, "take_course_form": take_course_form},
     )
 
 
@@ -799,10 +1045,10 @@ def edit_certification(request):
     training = (
         Training.objects.select_related("training_type")
         .filter(user=request.user)
-        .order_by("-status")
     )
     training_by_status = {
         "under review": training.get_review(),
+        "in progress": training.get_in_progress(),
         "active": training.get_valid(),
         "expired": training.get_expired(),
         "rejected": training.get_rejected(),

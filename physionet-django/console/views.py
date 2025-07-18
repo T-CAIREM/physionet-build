@@ -17,17 +17,18 @@ from django.contrib.auth.models import Group
 from django.contrib.contenttypes.forms import generic_inlineformset_factory
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.redirects.models import Redirect
-from django.db.models import Count, DurationField, F, Q
-from django.db.models.functions import Cast
+from django.db.models import Count, DurationField, F, Q, Prefetch
+from django.db.models.functions import Cast, TruncDate
 from django.forms import Select, Textarea, modelformset_factory
 from django.forms.models import model_to_dict
-from django.http import Http404, HttpResponse, JsonResponse, HttpResponseRedirect
+from django.http import Http404, HttpResponse, JsonResponse, HttpResponseRedirect, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.core.exceptions import PermissionDenied
 from events.forms import EventAgreementForm, EventDatasetForm
 from events.models import Event, EventAgreement, EventDataset, EventApplication
+from html2text import html2text
 from notification.models import News
 from physionet.forms import set_saved_fields_cookie
 from physionet.middleware.maintenance import ServiceUnavailable
@@ -48,6 +49,7 @@ from project.models import (
     EditLog,
     License,
     Publication,
+    PublishedAuthor,
     PublishedProject,
     Reference,
     StorageRequest,
@@ -80,7 +82,6 @@ from project.cloud.s3 import (
     upload_project_to_S3,
     get_bucket_name,
     check_s3_bucket_exists,
-    update_bucket_policy,
     has_s3_credentials,
 )
 
@@ -171,6 +172,10 @@ def submitted_projects(request):
             notification.assign_editor_notify(project)
             notification.editor_notify_new_project(project, user)
             messages.success(request, 'The editor has been assigned')
+        else:
+            for _, errors in assign_editor_form.errors.items():
+                for error in errors:
+                    messages.error(request, error)
 
     # Submitted projects
     projects = ActiveProject.objects.filter(submission_status__gt=SubmissionStatus.ARCHIVED).order_by(
@@ -271,19 +276,56 @@ def submission_info_redirect(request, project_slug):
     return redirect('submission_info', project_slug=project_slug)
 
 
+def submission_info_card_params(request,
+                                project,
+                                reassign_editor_form,
+                                embargo_form,
+                                internal_note_form,
+                                bulk_download,
+                                force_calculate):
+    """
+    Parameters used across submission_info_card.html pages, including:
+
+    awaiting_authors.html
+    copyedit_submission.html
+    edit_submission.html
+    publish_submission.html
+    submission_info.html
+    """
+    authors, author_emails = project.get_author_info(include_emails=True)
+    latest_version = project.core_project.publishedprojects.all().last()
+    url_prefix = notification.get_url_prefix(request)
+    bulk_url_prefix = notification.get_url_prefix(request, bulk_download=bulk_download)
+    notes = project.internal_notes.all().order_by('-created_at')
+
+    return {
+        'project': project,
+        'authors': authors,
+        'author_emails': author_emails,
+        'storage_info': project.get_storage_info(force_calculate=force_calculate),
+        'edit_logs': project.edit_log_history(),
+        'latest_version': latest_version,
+        'url_prefix': url_prefix,
+        'bulk_url_prefix': bulk_url_prefix,
+        'reassign_editor_form': reassign_editor_form,
+        'embargo_form': embargo_form,
+        'notes': notes,
+        'internal_note_form': internal_note_form,
+    }
+
+
 @console_permission_required('project.change_activeproject')
 def submission_info(request, project_slug):
     """
     View information about a project under submission
     """
     project = get_object_or_404(ActiveProject, slug=project_slug)
-    notes = project.internal_notes.all().order_by('-created_at')
 
     user = request.user
-    authors, author_emails, storage_info, edit_logs, copyedit_logs, latest_version = project.info_card()
+    copyedit_logs = project.copyedit_log_history()
 
     data = request.POST or None
-    reassign_editor_form = forms.ReassignEditorForm(user, data=data)
+    reassign_editor_form = forms.ReassignEditorForm(project=project, data=data)
     internal_note_form = forms.InternalNoteForm(data)
     embargo_form = forms.EmbargoFilesDaysForm()
     passphrase = ''
@@ -294,13 +336,16 @@ def submission_info(request, project_slug):
     elif 'remove_passphrase' in request.POST:
         project.anonymous.all().delete()
         anonymous_url, passphrase = '', 'revoked'
-    elif 'reassign_editor' in request.POST and reassign_editor_form.is_valid():
-        project.reassign_editor(reassign_editor_form.cleaned_data['editor'])
-        notification.editor_notify_new_project(project, user, reassigned=True)
-        messages.success(request, 'The editor has been reassigned')
-        LOGGER.info("The editor for the project {0} has been reassigned from "
-                    "{1} to {2}".format(project, user,
-                                        reassign_editor_form.cleaned_data['editor']))
+    elif 'reassign_editor' in request.POST and user == project.editor:
+        if reassign_editor_form.is_valid():
+            project.reassign_editor(reassign_editor_form.cleaned_data['editor'])
+            notification.editor_notify_new_project(project, user, reassigned=True)
+            messages.success(request, 'The editor has been reassigned')
+            LOGGER.info("The editor for the project {0} has been reassigned from "
+                        "{1} to {2}".format(project, user,
+                                            reassign_editor_form.cleaned_data['editor']))
+        else:
+            messages.error(request, 'Invalid submission. See errors below.')
     elif 'embargo_files' in request.POST:
         embargo_form = forms.EmbargoFilesDaysForm(data=request.POST)
         if settings.SYSTEM_MAINTENANCE_NO_UPLOAD:
@@ -332,24 +377,30 @@ def submission_info(request, project_slug):
             messages.error(request, "You are not authorized to delete this note.")
         return redirect(f'{request.path}?tab=notes')
 
-    url_prefix = notification.get_url_prefix(request)
-    bulk_url_prefix = notification.get_url_prefix(request, bulk_download=True)
     return render(request, 'console/submission_info.html',
-                  {'project': project, 'authors': authors,
-                   'author_emails': author_emails, 'storage_info': storage_info,
-                   'edit_logs': edit_logs, 'copyedit_logs': copyedit_logs,
-                   'latest_version': latest_version, 'passphrase': passphrase,
-                   'anonymous_url': anonymous_url, 'url_prefix': url_prefix,
-                   'bulk_url_prefix': bulk_url_prefix,
-                   'reassign_editor_form': reassign_editor_form,
-                   'embargo_form': embargo_form,
-                   'notes': notes,
-                   'internal_note_form': internal_note_form})
+                  {**submission_info_card_params(
+                   request,
+                   project,
+                   reassign_editor_form,
+                   embargo_form,
+                   internal_note_form,
+                   bulk_download=True,
+                   force_calculate=False
+                   ),
+                   'copyedit_logs': copyedit_logs,
+                   'passphrase': passphrase,
+                   'anonymous_url': anonymous_url,
+                   }
+                  )
+
 
 @handling_editor
 def edit_submission(request, project_slug, *args, **kwargs):
     """
-    Page to respond to a particular submission, as an editor
+    Page to respond to a particular submission, as an editor.
+
+    TODO: the way this page is implemented is muddled. fix it.
+    Submitting forms returns the user to /info/
     """
     project = kwargs['project']
 
@@ -358,8 +409,9 @@ def edit_submission(request, project_slug, *args, **kwargs):
     except EditLog.DoesNotExist:
         return redirect('editor_home')
 
-    reassign_editor_form = forms.ReassignEditorForm(request.user)
+    reassign_editor_form = forms.ReassignEditorForm(project=project)
     embargo_form = forms.EmbargoFilesDaysForm()
+    internal_note_form = forms.InternalNoteForm()
 
     # The user must be the editor
     if project.submission_status not in [SubmissionStatus.NEEDS_DECISION, SubmissionStatus.NEEDS_RESUBMISSION]:
@@ -388,32 +440,39 @@ def edit_submission(request, project_slug, *args, **kwargs):
         edit_submission_form = forms.EditSubmissionForm(
             resource_type=project.resource_type, instance=edit_log)
 
-    authors, author_emails, storage_info, edit_logs, _, latest_version = project.info_card()
-    url_prefix = notification.get_url_prefix(request)
-    bulk_url_prefix = notification.get_url_prefix(request, bulk_download=True)
-
-    return render(request, 'console/edit_submission.html',
-                  {'project': project, 'edit_submission_form': edit_submission_form,
-                   'authors': authors, 'author_emails': author_emails,
-                   'storage_info': storage_info, 'edit_logs': edit_logs,
-                   'latest_version': latest_version, 'url_prefix': url_prefix,
-                   'bulk_url_prefix': bulk_url_prefix,
-                   'editor_home': True, 'reassign_editor_form': reassign_editor_form,
-                   'embargo_form': embargo_form})
+    return render(request,
+                  'console/edit_submission.html',
+                  {**submission_info_card_params(
+                   request,
+                   project,
+                   reassign_editor_form,
+                   embargo_form,
+                   internal_note_form,
+                   bulk_download=True,
+                   force_calculate=False
+                   ),
+                   'edit_submission_form': edit_submission_form,
+                   'editor_home': True,
+                   }
+                  )
 
 
 @handling_editor
 def copyedit_submission(request, project_slug, *args, **kwargs):
     """
     Page to copyedit the submission
+
+    TODO: the way this page is implemented is muddled. fix it.
+    Submitting forms returns the user to /info/
     """
     project = kwargs['project']
     if project.submission_status != SubmissionStatus.NEEDS_COPYEDIT:
         return redirect('editor_home')
 
     copyedit_log = project.copyedit_logs.get(complete_datetime=None)
-    reassign_editor_form = forms.ReassignEditorForm(request.user)
+    reassign_editor_form = forms.ReassignEditorForm(project=project)
     embargo_form = forms.EmbargoFilesDaysForm()
+    internal_note_form = forms.InternalNoteForm()
 
     # Metadata forms and formsets
     ReferenceFormSet = generic_inlineformset_factory(Reference,
@@ -432,8 +491,7 @@ def copyedit_submission(request, project_slug, *args, **kwargs):
                                                        can_delete=False,
                                                        formset=project_forms.PublicationFormSet, validate_max=True)
 
-    description_form = project_forms.ContentForm(
-        resource_type=project.resource_type.id, instance=project)
+    description_form = project_forms.ContentForm(instance=project)
     ethics_form = project_forms.EthicsForm(instance=project)
 
     access_policy = request.GET.get('accessPolicy')
@@ -454,8 +512,9 @@ def copyedit_submission(request, project_slug, *args, **kwargs):
     if request.method == 'POST':
         if 'edit_content' in request.POST:
             description_form = project_forms.ContentForm(
-                resource_type=project.resource_type.id, data=request.POST,
-                instance=project)
+                data=request.POST,
+                instance=project,
+            )
             ethics_form = project_forms.EthicsForm(data=request.POST, instance=project)
             access_form = project_forms.AccessMetadataForm(data=request.POST,
                                                            instance=project)
@@ -512,14 +571,7 @@ def copyedit_submission(request, project_slug, *args, **kwargs):
     if 'subdir' not in vars():
         subdir = ''
 
-    (
-        authors,
-        author_emails,
-        storage_info,
-        edit_logs,
-        copyedit_logs,
-        latest_version,
-    ) = project.info_card(force_calculate=True)
+    copyedit_logs = project.copyedit_log_history()
 
     (
         display_files,
@@ -534,50 +586,46 @@ def copyedit_submission(request, project_slug, *args, **kwargs):
          project=project, subdir=subdir, display_dirs=display_dirs)
 
     edit_url = reverse('edit_content_item', args=[project.slug])
-    url_prefix = notification.get_url_prefix(request)
-    bulk_url_prefix = notification.get_url_prefix(request)
 
     response = render(
         request,
         'console/copyedit_submission.html',
-        {
-            'project': project,
-            'description_form': description_form,
-            'ethics_form': ethics_form,
-            'individual_size_limit': readable_size(ActiveProject.INDIVIDUAL_FILE_SIZE_LIMIT),
-            'access_form': access_form,
-            'reference_formset': reference_formset,
-            'publication_formset': publication_formset,
-            'topic_formset': topic_formset,
-            'storage_type': settings.STORAGE_TYPE,
-            'storage_info': storage_info,
-            'upload_files_form': upload_files_form,
-            'create_folder_form': create_folder_form,
-            'rename_item_form': rename_item_form,
-            'move_items_form': move_items_form,
-            'delete_items_form': delete_items_form,
-            'subdir': subdir,
-            'display_files': display_files,
-            'display_dirs': display_dirs,
-            'dir_breadcrumbs': dir_breadcrumbs,
-            'file_error': file_error,
-            'editor_home': True,
-            'is_editor': True,
-            'files_editable': True,
-            'copyedit_form': copyedit_form,
-            'authors': authors,
-            'author_emails': author_emails,
-            'edit_logs': edit_logs,
-            'copyedit_logs': copyedit_logs,
-            'latest_version': latest_version,
-            'add_item_url': edit_url,
-            'remove_item_url': edit_url,
-            'discovery_form': discovery_form,
-            'url_prefix': url_prefix,
-            'bulk_url_prefix': bulk_url_prefix,
-            'reassign_editor_form': reassign_editor_form,
-            'embargo_form': embargo_form,
-        },
+        {**submission_info_card_params(
+         request,
+         project,
+         reassign_editor_form,
+         embargo_form,
+         internal_note_form,
+         bulk_download=False,
+         force_calculate=True,
+         ),
+         'description_form': description_form,
+         'ethics_form': ethics_form,
+         'individual_size_limit': readable_size(ActiveProject.INDIVIDUAL_FILE_SIZE_LIMIT),
+         'access_form': access_form,
+         'reference_formset': reference_formset,
+         'publication_formset': publication_formset,
+         'topic_formset': topic_formset,
+         'storage_type': settings.STORAGE_TYPE,
+         'upload_files_form': upload_files_form,
+         'create_folder_form': create_folder_form,
+         'rename_item_form': rename_item_form,
+         'move_items_form': move_items_form,
+         'delete_items_form': delete_items_form,
+         'subdir': subdir,
+         'display_files': display_files,
+         'display_dirs': display_dirs,
+         'dir_breadcrumbs': dir_breadcrumbs,
+         'file_error': file_error,
+         'editor_home': True,
+         'is_editor': True,
+         'files_editable': True,
+         'copyedit_form': copyedit_form,
+         'copyedit_logs': copyedit_logs,
+         'add_item_url': edit_url,
+         'remove_item_url': edit_url,
+         'discovery_form': discovery_form,
+         },
     )
     if description_form_saved:
         set_saved_fields_cookie(description_form, request.path, response)
@@ -597,11 +645,14 @@ def awaiting_authors(request, project_slug, *args, **kwargs):
     if project.submission_status != SubmissionStatus.NEEDS_APPROVAL:
         return redirect('editor_home')
 
-    authors, author_emails, storage_info, edit_logs, copyedit_logs, latest_version = project.info_card()
+    copyedit_logs = project.copyedit_log_history()
+    authors = project.authors.all().order_by('display_order')
+
     outstanding_emails = ';'.join([a.user.email for a in authors.filter(
         approval_datetime=None)])
-    reassign_editor_form = forms.ReassignEditorForm(request.user)
+    reassign_editor_form = forms.ReassignEditorForm(project=project)
     embargo_form = forms.EmbargoFilesDaysForm()
+    internal_note_form = forms.InternalNoteForm()
 
     if request.method == 'POST':
         if 'reopen_copyedit' in request.POST:
@@ -616,19 +667,24 @@ def awaiting_authors(request, project_slug, *args, **kwargs):
             project.latest_reminder = timezone.now()
             project.save()
 
-    url_prefix = notification.get_url_prefix(request)
-    bulk_url_prefix = notification.get_url_prefix(request, bulk_download=True)
     yesterday = timezone.now() + timezone.timedelta(days=-1)
 
-    return render(request, 'console/awaiting_authors.html',
-                  {'project': project, 'authors': authors, 'author_emails': author_emails,
-                   'storage_info': storage_info, 'edit_logs': edit_logs,
-                   'copyedit_logs': copyedit_logs, 'latest_version': latest_version,
-                   'outstanding_emails': outstanding_emails, 'url_prefix': url_prefix,
-                   'bulk_url_prefix': bulk_url_prefix,
-                   'yesterday': yesterday, 'editor_home': True,
-                   'reassign_editor_form': reassign_editor_form,
-                   'embargo_form': embargo_form})
+    return render(request,
+                  'console/awaiting_authors.html',
+                  {**submission_info_card_params(
+                   request,
+                   project,
+                   reassign_editor_form,
+                   embargo_form,
+                   internal_note_form,
+                   bulk_download=True,
+                   force_calculate=False,
+                   ),
+                   'copyedit_logs': copyedit_logs,
+                   'outstanding_emails': outstanding_emails,
+                   'yesterday': yesterday,
+                   'editor_home': True,
+                   'reassign_editor_form': reassign_editor_form})
 
 
 @handling_editor
@@ -661,9 +717,12 @@ def publish_submission(request, project_slug, *args, **kwargs):
     if settings.SYSTEM_MAINTENANCE_NO_UPLOAD:
         raise ServiceUnavailable()
 
-    reassign_editor_form = forms.ReassignEditorForm(request.user)
+    reassign_editor_form = forms.ReassignEditorForm(project=project)
     embargo_form = forms.EmbargoFilesDaysForm()
-    authors, author_emails, storage_info, edit_logs, copyedit_logs, latest_version = project.info_card()
+    internal_note_form = forms.InternalNoteForm()
+
+    copyedit_logs = project.copyedit_log_history()
+
     if request.method == 'POST':
         publish_form = forms.PublishForm(project=project, data=request.POST)
         if project.is_publishable() and publish_form.is_valid():
@@ -698,19 +757,26 @@ def publish_submission(request, project_slug, *args, **kwargs):
             )
 
     publishable = project.is_publishable()
-    url_prefix = notification.get_url_prefix(request)
-    bulk_url_prefix = notification.get_url_prefix(request, bulk_download=True)
     publish_form = forms.PublishForm(project=project)
 
-    return render(request, 'console/publish_submission.html',
-                  {'project': project, 'publishable': publishable, 'authors': authors,
-                   'author_emails': author_emails, 'storage_info': storage_info,
-                   'edit_logs': edit_logs, 'copyedit_logs': copyedit_logs,
-                   'latest_version': latest_version, 'publish_form': publish_form,
-                   'max_slug_length': MAX_PROJECT_SLUG_LENGTH, 'url_prefix': url_prefix,
-                   'bulk_url_prefix': bulk_url_prefix,
-                   'reassign_editor_form': reassign_editor_form, 'editor_home': True,
-                   'embargo_form': embargo_form})
+    return render(request,
+                  'console/publish_submission.html',
+                  {**submission_info_card_params(
+                   request,
+                   project,
+                   reassign_editor_form,
+                   embargo_form,
+                   internal_note_form,
+                   bulk_download=True,
+                   force_calculate=True
+                   ),
+                   'publishable': publishable,
+                   'copyedit_logs': copyedit_logs,
+                   'publish_form': publish_form,
+                   'max_slug_length': MAX_PROJECT_SLUG_LENGTH,
+                   'editor_home': True,
+                   }
+                  )
 
 
 @console_permission_required('project.change_storagerequest')
@@ -777,14 +843,23 @@ def unsubmitted_projects(request):
 
 
 @console_permission_required('project.change_publishedproject')
-def published_projects(request):
+def published_projects(request, project_slug=None):
     """
     List of published projects
     """
-    projects = PublishedProject.objects.all().order_by('-publish_datetime')
+    if project_slug is None:
+        projects = PublishedProject.objects.all()
+    else:
+        projects = PublishedProject.objects.filter(slug=project_slug)
+        if projects.count() == 0:
+            raise Http404
+
+    projects = projects.order_by('-publish_datetime')
     projects = paginate(request, projects, 50)
-    return render(request, 'console/published_projects.html',
-                  {'projects': projects})
+    return render(request, 'console/published_projects.html', {
+        'projects': projects,
+        'project_slug': project_slug,
+    })
 
 
 @associated_task(PublishedProject, 'pid', read_only=True)
@@ -792,7 +867,7 @@ def published_projects(request):
 def send_files_to_gcp(pid):
     """
     Schedule a background task to send the files to GCP.
-    This function can be runned manually to force a re-send of all the files
+    This function can be run manually to force a re-send of all the files
     to GCP. It only requires the Project ID.
     """
     project = PublishedProject.objects.get(id=pid)
@@ -833,44 +908,6 @@ def send_files_to_aws(pid):
     if project.compressed_storage_size:
         project.aws.sent_zip = True
     project.aws.save()
-
-
-@associated_task(PublishedProject, "pid", read_only=True)
-@background()
-def update_aws_bucket_policy(pid):
-    """
-    Update the AWS S3 bucket's access policy based on the
-    project's access policy.
-
-    This function determines the access policy of the project identified
-    by 'pid' and updates the AWS S3 bucket's access policy accordingly.
-    It checks if the bucket exists, retrieves its name, and uses the
-    'utility.update_bucket_policy' function for the update.
-
-    Args:
-        pid (int): The unique identifier (ID) of the project for which to
-        update the bucket policy.
-
-    Returns:
-        bool: True if the bucket policy was updated successfully,
-        False otherwise.
-
-    Note:
-    - Verify that AWS credentials and configurations are correctly set up
-    for the S3 client.
-    - The 'updated_policy' variable indicates whether the policy was
-    updated successfully.
-    """
-    updated_policy = False
-    project = PublishedProject.objects.get(id=pid)
-    exists = check_s3_bucket_exists(project)
-    if exists:
-        bucket_name = get_bucket_name(project)
-        update_bucket_policy(project, bucket_name)
-        updated_policy = True
-    else:
-        updated_policy = False
-    return updated_policy
 
 
 @console_permission_required('project.change_publishedproject')
@@ -1159,7 +1196,6 @@ def aws_bucket_management(request, project, user):
         is_private = False
 
     bucket_name = get_bucket_name(project)
-
     if not AWS.objects.filter(project=project).exists():
         AWS.objects.create(
             project=project, bucket_name=bucket_name, is_private=is_private
@@ -1789,8 +1825,11 @@ def training_list(request, status):
     """
     List all training applications.
     """
-    trainings = Training.objects.select_related(
-        'user__profile', 'training_type').order_by('-user__is_credentialed', 'application_datetime')
+    trainings = (
+        Training.objects.select_related("user__profile", "training_type")
+        .annotate(application_date=TruncDate("application_datetime"))
+        .order_by("application_date", "-user__is_credentialed", "application_datetime")
+    )
 
     training_types = TrainingType.objects.values_list("name", flat=True)
 
@@ -2275,6 +2314,270 @@ def submission_stats(request):
                   {'submenu': 'submission', 'stats': stats})
 
 
+@console_permission_required('project.can_view_stats')
+def downloads(request):
+    """
+    Display page in the console with a list of downloadable CSVs.
+    """
+    return render(request, 'console/downloads.html',
+                  {'submenu': 'submission'})
+
+
+class Echo:
+    """
+    Used in StreamingHttpResponse to deliver large CSVs without timeout.
+    """
+    def write(self, value):
+        """
+        Write the value by returning it, instead of storing in a buffer.
+        """
+        return value
+
+
+@console_permission_required('user.change_credentialapplication')
+def download_users(request):
+    """
+    Delivers a CSV file containing data on users.
+    """
+    users = User.objects.select_related('profile').prefetch_related(
+        Prefetch('credential_applications',
+                 queryset=CredentialApplication.objects.filter(
+                     status=CredentialApplication.Status.ACCEPTED
+                 ).order_by('decision_datetime'),
+                 to_attr='accepted_credentials'))
+
+    # Use StreamingHttpResponse to stream data
+    response = StreamingHttpResponse(
+        (csv.writer(Echo(), quoting=csv.QUOTE_ALL).writerow(row) for row in generate_user_csv_data(users)),
+        content_type='text/csv'
+    )
+
+    response['Content-Disposition'] = 'attachment; filename="users.csv"'
+    return response
+
+
+def generate_user_csv_data(users):
+    """
+    Generates user data for download
+    """
+    csv_header = ["user_id",
+                  "username",
+                  "join_date",
+                  "last_login",
+                  "registration_ip",
+                  "is_active_user",
+                  "primary_email",
+                  "all_emails",
+                  "first_names",
+                  "last_name",
+                  "full_name",
+                  "affiliation",
+                  "location",
+                  "website",
+                  "orcid_id",
+                  "credentialing_status",
+                  "credentialing_decision_date",
+                  "credentialing_organization_name",
+                  "credentialing_job_title",
+                  "credentialing_city",
+                  "credentialing_state_or_province",
+                  "credentialing_country",
+                  "credentialing_webpage",
+                  "credentialing_reference_name",
+                  "credentialing_reference_email",
+                  "credentialing_reference_org",
+                  "credentialing_reference_response",
+                  "credentialing_research_summary"]
+
+    yield csv_header
+
+    for user in users:
+        credentials = user.credential_applications.filter(
+            status=CredentialApplication.Status.ACCEPTED).order_by('decision_datetime').last()
+
+        yield [user.id,
+               user.username,
+               user.join_date,
+               user.last_login,
+               user.registration_ip,
+               user.is_active,
+               user.email,
+               ', '.join(user.get_emails()),
+               user.profile.first_names,
+               user.profile.last_name,
+               user.profile.get_full_name(),
+               user.profile.affiliation,
+               user.profile.location,
+               user.profile.website,
+               user.get_orcid_id(),
+               user.get_credentialing_status(),
+               credentials.decision_datetime if credentials else None,
+               credentials.organization_name if credentials else None,
+               credentials.job_title if credentials else None,
+               credentials.city if credentials else None,
+               credentials.state_province if credentials else None,
+               credentials.country if credentials else None,
+               credentials.webpage if credentials else None,
+               credentials.reference_name if credentials else None,
+               credentials.reference_email if credentials else None,
+               credentials.reference_organization if credentials else None,
+               credentials.reference_response_text if credentials else None,
+               credentials.research_summary if credentials else None,
+               ]
+
+
+@console_permission_required('user.change_credentialapplication')
+def download_projects(request):
+    """
+    Delivers a CSV file containing data on published projects.
+    """
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="projects.csv"'
+
+    writer = csv.writer(response, quoting=csv.QUOTE_ALL)
+    writer.writerow(["project_id",
+                     "core_project_id",
+                     "project_slug",
+                     "resource_type_id",
+                     "resource_type",
+                     "version",
+                     "publish_date",
+                     "has_other_versions",
+                     "version_order",
+                     "is_latest_version",
+                     "project_doi",
+                     "core_project_doi",
+                     "full_description",
+                     "submitting_author_id",
+                     "title",
+                     "abstract",
+                     "background",
+                     "methods",
+                     "content_description",
+                     "usage_notes",
+                     "installation",
+                     "acknowledgements",
+                     "conflicts_of_interest",
+                     "release_notes",
+                     "short_description",
+                     "access_policy",
+                     "license",
+                     "data_use_agreement",
+                     "signed_dua_count",
+                     "storage_size_mb",
+                     "project_home_page",
+                     "ethics_statement",
+                     "corresponding_author_id",
+                     "author_ids",
+                     "associated_paper",
+                     "associated_paper_url",
+                     ])
+
+    projects = PublishedProject.objects.all()
+
+    # Function to process and sanitize HTML content
+    def clean_html(html_content):
+        text = html2text(html_content)
+        text = text.replace('\n', ' ').replace('"', '""')
+        return text.strip()
+
+    for project in projects:
+        authors = project.authors.all().order_by('display_order')
+        publication = project.publications.first()
+
+        project_data = [project.id,
+                        project.core_project.id,
+                        project.slug,
+                        project.resource_type_id,
+                        project.resource_type.name,
+                        project.version,
+                        project.publish_datetime,
+                        project.has_other_versions,
+                        project.version_order,
+                        project.is_latest_version,
+                        project.doi,
+                        project.core_project.doi,
+                        clean_html(project.full_description),
+                        ', '.join(str(author.id) for author in authors if author.is_submitting),
+                        project.title,
+                        clean_html(project.abstract),
+                        clean_html(project.background),
+                        clean_html(project.methods),
+                        clean_html(project.content_description),
+                        clean_html(project.usage_notes),
+                        clean_html(project.installation),
+                        clean_html(project.acknowledgements),
+                        clean_html(project.conflicts_of_interest),
+                        clean_html(project.release_notes),
+                        project.short_description,
+                        project.access_policy,
+                        project.license,
+                        project.dua,
+                        DUASignature.objects.filter(project=project.id).count(),
+                        round(project.main_storage_size / 1000000, 1),
+                        project.project_home_page,
+                        clean_html(project.ethics_statement),
+                        ', '.join(str(author.id) for author in authors if author.is_corresponding),
+                        ', '.join(str(author.id) for author in authors),
+                        publication.citation if publication else None,
+                        publication.url if publication else None,
+                        ]
+
+        writer.writerow(project_data)
+    return response
+
+
+@console_permission_required('user.change_credentialapplication')
+def download_published_authors(request):
+    """
+    Delivers a CSV file containing data on published authors.
+    """
+    authors = PublishedAuthor.objects.all()
+    response = StreamingHttpResponse(
+        (csv.writer(Echo(), quoting=csv.QUOTE_ALL).writerow(row) for row in get_published_authors(authors)),
+        content_type='text/csv'
+    )
+
+    response['Content-Disposition'] = 'attachment; filename="published_authors.csv"'
+    return response
+
+
+def get_published_authors(authors):
+    """
+    Generates published author data for download
+    """
+    csv_header = ["published_author_id",
+                  "project_id",
+                  "user_id",
+                  "first_names",
+                  "last_name",
+                  "corresponding_email",
+                  "all_emails",
+                  "affiliations",
+                  "approval_datetime",
+                  "is_corresponding",
+                  "is_submitting",
+                  "display_order"
+                  ]
+    yield csv_header
+
+    for author in authors:
+
+        yield [author.id,
+               author.project.id,
+               author.user.id,
+               author.first_names,
+               author.last_name,
+               author.corresponding_email,
+               ', '.join(author.user.get_emails()),
+               '; '.join([a.name for a in author.affiliations.all()]),
+               author.approval_datetime,
+               author.is_corresponding,
+               author.is_submitting,
+               author.display_order
+               ]
+
+
 @console_permission_required('project.can_view_access_logs')
 def download_credentialed_users(request):
     """
@@ -2301,11 +2604,11 @@ def download_credentialed_users(request):
         elif 'eicu' in person.project.slug:
             eicu_signature_date = person.sign_datetime
         if person.user.id in added:
-            for indx, item in enumerate(dua_info_csv):
+            for index, item in enumerate(dua_info_csv):
                 if item[2] == person.user.email and item[5] == None:
-                    dua_info_csv[indx][5] = mimic_signature_date
+                    dua_info_csv[index][5] = mimic_signature_date
                 elif item[2] == person.user.email and item[6] == None:
-                    dua_info_csv[indx][6] = eicu_signature_date
+                    dua_info_csv[index][6] = eicu_signature_date
         else:
             if application:
                 dua_info_csv.append([person.user.profile.first_names,
@@ -2644,7 +2947,7 @@ class ProjectAutocomplete(autocomplete.Select2QuerySetView):
 @console_permission_required('user.change_credentialapplication')
 def known_references(request):
     """
-    List all known references witht he option of removing the contact date
+    List all known references with he option of removing the contact date
     """
     user = request.user
 
@@ -3168,7 +3471,7 @@ def event_management(request, event_slug):
     # handle the add dataset form(s)
     if request.method == "POST":
         if "add-event-dataset" in request.POST.keys():
-            event_dataset_form = EventDatasetForm(request.POST)
+            event_dataset_form = EventDatasetForm(request.POST, user=request.user)
             if event_dataset_form.is_valid():
                 active_datasets = selected_event.datasets.filter(
                     dataset=event_dataset_form.cleaned_data["dataset"],

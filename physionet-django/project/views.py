@@ -49,6 +49,7 @@ from project.models import (
     SubmissionStatus,
     Topic,
     UploadedDocument,
+    AWS,
 )
 from project.authorization.access import can_view_project_files, can_access_project
 from project.projectfiles import ProjectFiles
@@ -58,6 +59,7 @@ from user.models import AssociatedEmail, CloudInformation, CredentialApplication
 from project.cloud.s3 import (
     has_s3_credentials,
     files_sent_to_S3,
+    add_user_to_access_point_policy,
 )
 from django.db.models import F, DateTimeField, ExpressionWrapper
 
@@ -764,15 +766,16 @@ def project_content(request, project_slug, **kwargs):
         max_num=forms.ReferenceFormSet.max_forms, can_delete=False,
         formset=forms.ReferenceFormSet, validate_max=True)
 
-    description_form = forms.ContentForm(resource_type=project.resource_type.id,
-                                         instance=project, editable=editable)
+    description_form = forms.ContentForm(instance=project, editable=editable)
     reference_formset = ReferenceFormSet(instance=project)
     saved = False
 
     if request.method == 'POST':
         description_form = forms.ContentForm(
-            resource_type=project.resource_type.id, data=request.POST,
-            instance=project, editable=editable)
+            data=request.POST,
+            instance=project,
+            editable=editable,
+        )
         reference_formset = ReferenceFormSet(request.POST, instance=project)
         if description_form.is_valid() and reference_formset.is_valid():
             saved = True
@@ -825,9 +828,11 @@ def project_access(request, project_slug, **kwargs):
         else:
             access_form = forms.AccessMetadataForm(instance=project, editable=editable)
 
-
-    return render(request, 'project/project_access.html', {'project':project,
-        'access_form':access_form, 'is_submitting':kwargs['is_submitting']})
+    return render(request, 'project/project_access.html', {
+        'project': project, 'access_form': access_form,
+        'is_submitting': kwargs['is_submitting'],
+        'access_policy_choices': settings.ALLOWED_ACCESS_POLICIES,
+    })
 
 
 @project_auth(auth_mode=0, post_auth_mode=2)
@@ -1027,6 +1032,7 @@ def project_files_panel(request, project_slug, **kwargs):
             'is_submitting': is_submitting,
             'is_editor': is_editor,
             'files_editable': files_editable,
+            'max_files_per_upload': settings.DATA_UPLOAD_MAX_NUMBER_FILES,
             'individual_size_limit': utility.readable_size(ActiveProject.INDIVIDUAL_FILE_SIZE_LIMIT),
         },
     )
@@ -1147,6 +1153,7 @@ def project_files(request, project_slug, subdir='', **kwargs):
         'project/project_files.html',
         {
             'project': project,
+            'max_files_per_upload': settings.DATA_UPLOAD_MAX_NUMBER_FILES,
             'individual_size_limit': utility.readable_size(ActiveProject.INDIVIDUAL_FILE_SIZE_LIMIT),
             'subdir': subdir,
             'parent_dir': parent_dir,
@@ -1925,6 +1932,19 @@ def published_project(request, project_slug, version, subdir=''):
     current_site = get_current_site(request)
     bulk_url_prefix = notification.get_url_prefix(request, bulk_download=True)
     all_project_versions = PublishedProject.objects.filter(slug=project_slug).order_by('version_order')
+
+    s3_uri = None
+    try:
+        if project.aws.is_private:
+            if has_signed_dua and request.user.is_authenticated:
+                access_point = project.aws.access_points.filter(linked_users__user=request.user).first()
+                if access_point:
+                    s3_uri = access_point.private_s3_uri()
+        else:
+            s3_uri = '--no-sign-request ' + project.aws.public_s3_uri()
+    except AWS.DoesNotExist:
+        s3_uri = None
+
     context = {
         'project': project,
         'authors': authors,
@@ -1952,6 +1972,7 @@ def published_project(request, project_slug, version, subdir=''):
         'is_lightwave_supported': project.files.is_lightwave_supported(),
         'is_wget_supported': project.files.is_wget_supported(),
         'has_s3_credentials': has_s3_credentials(),
+        's3_uri': s3_uri,
         'show_platform_wide_citation': show_platform_wide_citation,
         'main_platform_citation': main_platform_citation,
     }
@@ -2008,7 +2029,6 @@ def sign_dua(request, project_slug, version):
     Page to sign the dua for a protected project.
     Both restricted and credentialed policies.
     """
-    from console.views import update_aws_bucket_policy
     user = request.user
     project = PublishedProject.objects.filter(slug=project_slug, version=version)
     if project:
@@ -2030,11 +2050,16 @@ def sign_dua(request, project_slug, version):
 
     license = project.license
     license_content = project.license_content(fmt='html')
-
     if request.method == 'POST' and 'agree' in request.POST:
         DUASignature.objects.create(user=user, project=project)
-        if has_s3_credentials() and files_sent_to_S3(project) is not None:
-            update_aws_bucket_policy(project.id)
+        if has_s3_credentials() and files_sent_to_S3(project):
+            if (
+                hasattr(user, 'cloud_information')
+                and user.cloud_information is not None
+                and user.cloud_information.aws_verification_datetime is not None
+            ):
+                add_user_to_access_point_policy(project, user)
+
         return render(request, 'project/sign_dua_complete.html', {
             'project':project})
 
@@ -2053,12 +2078,12 @@ def request_data_access(request, project_slug, version):
         return redirect('published_project', project_slug=project_slug, version=version)
 
     if request.method == 'POST':
-        access_request_form = forms.DataAccessRequestForm(
+        project_request_form = forms.DataAccessRequestForm(
             project=project, requester=request.user, template=None, prefix="proj", data=request.POST
         )
 
-        if access_request_form.is_valid():
-            access_request = access_request_form.save()
+        if project_request_form.is_valid():
+            access_request = project_request_form.save()
 
             corresponding_author = project.corresponding_author().user
             reviewers = [reviewer.reviewer for reviewer in DataAccessRequestReviewer.objects.filter(
@@ -2071,7 +2096,7 @@ def request_data_access(request, project_slug, version):
             notification.confirm_user_data_access_request(access_request, request.scheme, request.get_host())
 
             response = render(request, 'project/data_access_request_submitted.html', {'project': project})
-            set_saved_fields_cookie(access_request_form, request.path, response)
+            set_saved_fields_cookie(project_request_form, request.path, response)
 
             return response
     else:
@@ -2327,8 +2352,10 @@ def published_project_request_access(request, project_slug, version, access_type
 
     try:
         # check user if user has GCP or AWS info in profile
-        if (user.cloud_information.gcp_email is None and access_type in [3, 4]) or (
-            user.cloud_information.aws_id is None and access_type == 2):
+        if (
+            (user.cloud_information.gcp_email is None and access_type in [3, 4])
+            or (user.cloud_information.aws_verification_datetime is None and access_type == 2)
+        ):
             messages.error(request, 'Please set the user cloud information in your settings')
             return redirect('edit_cloud')
     except CloudInformation.DoesNotExist:

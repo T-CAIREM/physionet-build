@@ -32,6 +32,7 @@ from user.models import (
     TrainingType,
     TrainingStatus,
     RequiredField,
+    Orcid,
 )
 from user.trainingreport import TrainingCertificateError, find_training_report_url
 from user.userfiles import UserFiles
@@ -859,6 +860,8 @@ class TrainingForm(forms.ModelForm):
         training_type_id = kwargs.pop('training_type', None)
 
         super().__init__(*args, **kwargs)
+        self.fields['training_type'].queryset = self.fields['training_type'].queryset.exclude(
+            required_field=RequiredField.PLATFORM)
 
         self.training_type = TrainingType.objects.filter(id=training_type_id).first()
 
@@ -928,3 +931,29 @@ class TrainingForm(forms.ModelForm):
         TrainingQuestion.objects.bulk_create(training_questions)
 
         return training
+
+
+class OrcidRegistrationForm(RegistrationForm):
+    """
+    Form to register new user after signing in with ORCID.
+    This saves user as the same way RegistrationForm but also stores
+    Orcid profile linked with this user.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.orcid_token = kwargs.pop('orcid_token', None)
+        super().__init__(*args, **kwargs)
+
+    def save(self):
+        with transaction.atomic():
+            user = super().save()
+            orcid_profile = Orcid.objects.create(
+                user=user, orcid_id=self.orcid_token.get('orcid')
+            )
+            orcid_profile.access_token = self.orcid_token.get('access_token')
+            orcid_profile.refresh_token = self.orcid_token.get('refresh_token')
+            orcid_profile.token_type = self.orcid_token.get('token_type')
+            orcid_profile.token_scope = self.orcid_token.get('scope')
+            orcid_profile.token_expiration = self.orcid_token.get('expires_at')
+            orcid_profile.save()
+        return user
