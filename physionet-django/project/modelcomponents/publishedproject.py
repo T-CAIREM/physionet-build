@@ -51,16 +51,6 @@ class PublishedProject(Metadata, SubmissionInfo):
     featured = models.PositiveSmallIntegerField(null=True)
     has_wfdb = models.BooleanField(default=False)
     display_publications = models.BooleanField(default=True)
-    # Where all the published project files are kept, depending on access.
-    PROTECTED_FILE_ROOT = os.path.join(settings.MEDIA_ROOT, 'published-projects')
-    # Workaround for development
-    # Note that all files located within the *parent directory* of
-    # PUBLIC_FILE_ROOT are treated as public (see
-    # physionet-django/lightwave/views.py).
-    if settings.STATIC_ROOT is None:
-        PUBLIC_FILE_ROOT = os.path.join(settings.STATICFILES_DIRS[0], 'published-projects')
-    else:
-        PUBLIC_FILE_ROOT = os.path.join(settings.STATIC_ROOT, 'published-projects')
 
     SPECIAL_FILES = {
         'FILES.txt':'List of all files',
@@ -337,9 +327,9 @@ class PublishedProject(Metadata, SubmissionInfo):
             project_versions.append(project.version)
         sorted_versions = sorted(project_versions, key=StrictVersion)
 
-        for indx, version in enumerate(sorted_versions):
+        for index, version in enumerate(sorted_versions):
             tmp = published_projects.get(version=version)
-            tmp.version_order = indx
+            tmp.version_order = index
             tmp.has_other_versions = True
             tmp.is_latest_version = False
             if sorted_versions[-1] == version:

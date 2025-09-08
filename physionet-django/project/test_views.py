@@ -1,4 +1,3 @@
-
 import base64
 import html.parser
 import os
@@ -6,9 +5,10 @@ from http import HTTPStatus
 import json
 from unittest import mock
 
+from django.conf import settings
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from project.forms import ContentForm
 from project.models import (
@@ -16,13 +16,16 @@ from project.models import (
     ActiveProject,
     Author,
     AuthorInvitation,
+    CoreProject,
     DataAccessRequest,
     DataAccessRequestReviewer,
     License,
+    ProjectType,
     PublishedAuthor,
     PublishedProject,
     StorageRequest,
-    SubmissionStatus
+    SubmissionStatus,
+    AWS
 )
 from user.models import User
 from user.test_views import TestMixin, prevent_request_warnings
@@ -521,9 +524,10 @@ class TestProjectEditing(TestCase):
             'project-reference-content_type-object_id-INITIAL_FORMS': '0',
             'project-reference-content_type-object_id-MIN_NUM_FORMS': '0',
             'project-reference-content_type-object_id-MAX_NUM_FORMS': '0',
+            'title': project.title,
         }
-        for field in ContentForm.FIELDS[project.resource_type.id]:
-            data[field] = getattr(project, field)
+        for section in project.content_sections():
+            data[section.field_name] = section.body
 
         response = self.client.post(content_url, data=data)
         self.assertEqual(response.status_code, 200)
@@ -875,6 +879,19 @@ class TestAccessPublished(TestMixin):
             args=(project.slug, project.version, long_fn)))
         self.assertEqual(response.status_code, 404)
 
+        AWS.objects.create(
+            project=project,
+            bucket_name='testproject',
+            is_private=False,
+            sent_zip=True,
+            sent_files=True,
+        )
+
+        response = self.client.get(reverse(
+            'published_project', args=(project.slug, project.version,)
+        ))
+        self.assertEqual(response.status_code, 200)
+
     @prevent_request_warnings
     def test_nonexistent(self):
         """
@@ -905,7 +922,7 @@ class TestAccessPublished(TestMixin):
             # Requests for this public URL:
             url = '/files/{}/{}/'.format(project.slug, project.version)
             # should be redirected to this internal path:
-            path = '/static/published-projects/{}/{}/'.format(
+            path = '/protected/published-projects/{}/{}/'.format(
                 project.slug, project.version)
 
             response = self.client.get(url + 'foo/')
@@ -1132,6 +1149,7 @@ class TestSelfManagedProjectWorkflows(TestMixin):
                              data={
                                  'proj-data_use_purpose': msg_purpose,
                                  'proj-data_use_title': 'example title',
+                                 'proj-lay_summary': 'example lay summary',
                                  'proj-agree_dua': ['on']})
 
             da_req = DataAccessRequest.objects.filter(
@@ -1350,22 +1368,22 @@ class TestGenerateSignedUrl(TestMixin):
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename without a leading slash returns a bad reqeust.'):
+        with self.subTest('A filename without a leading slash returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_3, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename with  leading slashes returns a bad reqeust.'):
+        with self.subTest('A filename with  leading slashes returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_4, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename with a trailing slash returns a bad reqeust.'):
+        with self.subTest('A filename with a trailing slash returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_5, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
 
-        with self.subTest('A filename with an empty segment returns a bad reqeust.'):
+        with self.subTest('A filename with an empty segment returns a bad request.'):
             response = self.client.post(self.url, self.invalid_filename_data_6, format='json')
 
             self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
@@ -1431,3 +1449,130 @@ class TestGenerateSignedUrl(TestMixin):
                 format='json'
             )
             self.assertEqual(response.status_code, HTTPStatus.FORBIDDEN)
+
+
+@override_settings(BLOCKED_REGIONS={'localhost'})
+class TestGeoRestrictedAccess(TestCase):
+    def setUp(self):
+        # Use existing fixtures and set georestricted flag
+        self.credentialed_project = PublishedProject.objects.get(title='Demo eICU Collaborative Research Database')
+        self.credentialed_project.georestricted = True
+        self.credentialed_project.save()
+
+        self.open_project = PublishedProject.objects.get(title='Demo ECG Signal Toolbox')
+        self.open_project.georestricted = True
+        self.open_project.save()
+
+        # Ensure LICENSE.txt exists for both projects in the test media directory
+        for project in [self.open_project, self.credentialed_project]:
+            project_path = os.path.join(
+                settings.MEDIA_ROOT, 'published-projects', project.slug, str(project.version)
+            )
+            os.makedirs(project_path, exist_ok=True)
+            license_path = os.path.join(project_path, 'LICENSE.txt')
+            if not os.path.exists(license_path):
+                with open(license_path, 'w') as f:
+                    f.write('Test license content\n')
+
+    @mock.patch('physionet.utility.get_country_code')
+    def test_blocked_country_open_project(self, mock_get_country_code):
+        mock_get_country_code.return_value = 'localhost'
+        # Test that direct file access is blocked
+        url = reverse('serve_published_project_file', args=(self.open_project.slug,
+                                                            self.open_project.version,
+                                                            'LICENSE.txt'))
+        response = self.client.get(url, REMOTE_ADDR='localhost')
+        self.assertEqual(response.status_code, 403)
+
+        # Test that project page shows georestriction message
+        url = reverse('published_project', args=(self.open_project.slug,
+                                                 self.open_project.version))
+        response = self.client.get(url, REMOTE_ADDR='localhost')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b'Data is not available in your region due to legal or policy restrictions',
+            response.content
+        )
+
+    @mock.patch('physionet.utility.get_country_code')
+    def test_blocked_country_credentialed_project(self, mock_get_country_code):
+        mock_get_country_code.return_value = 'localhost'
+        # Test that direct file access is blocked
+        url = reverse('serve_published_project_file', args=(self.credentialed_project.slug,
+                                                            self.credentialed_project.version,
+                                                            'LICENSE.txt'))
+        response = self.client.get(url, REMOTE_ADDR='localhost')
+        self.assertEqual(response.status_code, 403)
+
+        # Test that project page shows georestriction message
+        url = reverse('published_project', args=(self.credentialed_project.slug,
+                                                 self.credentialed_project.version))
+        response = self.client.get(url, REMOTE_ADDR='localhost')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b'Data is not available in your region due to legal or policy restrictions',
+            response.content
+        )
+
+    @mock.patch('physionet.utility.get_country_code')
+    def test_allowed_country_open_project(self, mock_get_country_code):
+        mock_get_country_code.return_value = 'US'
+        # Test that direct file access is allowed for allowed countries
+        url = reverse('serve_published_project_file', args=(self.open_project.slug,
+                                                            self.open_project.version,
+                                                            'LICENSE.txt'))
+        response = self.client.get(url, REMOTE_ADDR='192.168.1.1')
+        # Should not be blocked by region restriction
+        self.assertNotEqual(response.status_code, 403)
+        self.assertNotEqual(response.status_code, 404)
+        if response.status_code == 200:
+            self.assertNotIn(
+                b'Data is not available in your region due to legal or policy restrictions',
+                response.content
+            )
+
+        # Test that project page doesn't show georestriction message
+        url = reverse('published_project', args=(self.open_project.slug, self.open_project.version))
+        response = self.client.get(url, REMOTE_ADDR='192.168.1.1')
+        # Should not be blocked by region restriction
+        self.assertNotEqual(response.status_code, 403)
+        self.assertNotEqual(response.status_code, 404)
+        if response.status_code == 200:
+            self.assertNotIn(
+                b'Data is not available in your region due to legal or policy restrictions',
+                response.content
+            )
+
+    @mock.patch('physionet.utility.get_country_code')
+    def test_not_georestricted(self, mock_get_country_code):
+        mock_get_country_code.return_value = 'localhost'
+
+        # Temporarily set project to non-georestricted for this test
+        self.open_project.georestricted = False
+        self.open_project.save()
+
+        # Test that non-georestricted projects allow access even from blocked countries
+        url = reverse('serve_published_project_file', args=(self.open_project.slug,
+                                                            self.open_project.version,
+                                                            'LICENSE.txt'))
+        response = self.client.get(url, REMOTE_ADDR='localhost')
+        # Should not be blocked by region restriction
+        self.assertNotEqual(response.status_code, 403)
+
+        # Test that project page doesn't show georestriction message
+        url = reverse('published_project', args=(self.open_project.slug, self.open_project.version))
+        response = self.client.get(url, REMOTE_ADDR='localhost')
+        # Should not be blocked by region restriction
+        self.assertNotEqual(response.status_code, 403)
+        if response.status_code == 200:
+            self.assertNotIn(
+                b'Data is not available in your region due to legal or policy restrictions',
+                response.content
+            )
+
+    def tearDown(self):
+        # Reset georestriction flags
+        self.credentialed_project.georestricted = False
+        self.credentialed_project.save()
+        self.open_project.georestricted = False
+        self.open_project.save()

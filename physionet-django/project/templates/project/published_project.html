@@ -95,19 +95,7 @@
           {{ project.full_description|safe }}
         <hr>
         {% else %}
-          {# 0: Database #}
-          {% if project.resource_type.id == 0 %}
-            {% include "project/database_content.html" %}
-          {# 1: Software #}
-          {% elif project.resource_type.id == 1 %}
-            {% include "project/software_content.html" %}
-          {# 2: Challenge #}
-          {% elif project.resource_type.id == 2 %}
-            {% include "project/challenge_content.html" %}
-          {# 3: Model #}
-          {% elif project.resource_type.id == 3 %}
-            {% include "project/model_content.html" %}
-          {% endif %}
+          {% include "project/published_project_content.html" %}
         {% endif %}
       </div>
       <!-- /.main column -->
@@ -122,86 +110,13 @@
           Contents
           </button>
           <div class="dropdown-menu">
-            {% if project.resource_type.id == 0 %}{# 0: Database #}
-              <a class="dropdown-item" href="#abstract">Abstract</a>
-              <a class="dropdown-item" href="#background">Background</a>
-              <a class="dropdown-item" href="#methods">Methods</a>
-              <a class="dropdown-item" href="#description">Data Description</a>
-              <a class="dropdown-item" href="#usage-notes">Usage Notes</a>
-              {% if project.release_notes %}
-                <a class="dropdown-item" href="#release-notes">Release Notes</a>
+            {% for section in project.content_sections %}
+              {% if section.body %}
+                <a class="dropdown-item" href="#{{ section.html_id }}">{{ section.title }}</a>
               {% endif %}
-              {% if project.ethics_statement %}
-                <a class="dropdown-item" href="#ethics">Ethics</a>
-              {% endif %}
-              {% if project.acknowledgements %}
-                <a class="dropdown-item" href="#acknowledgements">Acknowledgements</a>
-              {% endif %}
-              <a class="dropdown-item" href="#conflicts-of-interest">Conflicts of Interest</a>
-              {% if references %}
-                <a class="dropdown-item" href="#references">References</a>
-              {% endif %}
-            {% elif project.resource_type.id == 1 %}{# 1: Software #}
-              <a class="dropdown-item" href="#abstract">Abstract</a>
-              <a class="dropdown-item" href="#background">Background</a>
-              <a class="dropdown-item" href="#description">Software Description</a>
-              {% if project.methods %}
-                <a class="dropdown-item" href="#implementation">Technical Implementation</a>
-              {% endif %}
-              <a class="dropdown-item" href="#installation">Installation and Requirements</a>
-              <a class="dropdown-item" href="#usage-notes">Usage Notes</a>
-              {% if project.release_notes %}
-                <a class="dropdown-item" href="#release-notes">Release Notes</a>
-              {% endif %}
-              {% if project.ethics_statement %}
-                <a class="dropdown-item" href="#ethics">Ethics</a>
-              {% endif %}
-              {% if project.acknowledgements %}
-                <a class="dropdown-item" href="#acknowledgements">Acknowledgements</a>
-              {% endif %}
-              <a class="dropdown-item" href="#conflicts-of-interest">Conflicts of Interest</a>
-              {% if references %}
-                <a class="dropdown-item" href="#references">References</a>
-              {% endif %}
-            {% elif project.resource_type.id == 2 %}{# 2: Challenge #}
-              <a class="dropdown-item" href="#abstract">Abstract</a>
-              <a class="dropdown-item" href="#objective">Objective</a>
-              <a class="dropdown-item" href="#participation">Participation</a>
-              <a class="dropdown-item" href="#description">Data Description</a>
-              <a class="dropdown-item" href="#evaluation">Evaluation</a>
-              {% if project.release_notes %}
-                <a class="dropdown-item" href="#release-notes">Release Notes</a>
-              {% endif %}
-              {% if project.ethics_statement %}
-                <a class="dropdown-item" href="#ethics">Ethics</a>
-              {% endif %}
-              {% if project.acknowledgements %}
-                <a class="dropdown-item" href="#acknowledgements">Acknowledgements</a>
-              {% endif %}
-              <a class="dropdown-item" href="#conflicts-of-interest">Conflicts of Interest</a>
-              {% if references %}
-                <a class="dropdown-item" href="#references">References</a>
-              {% endif %}
-            {% elif project.resource_type.id == 3 %}{# 3: Model #}
-              <a class="dropdown-item" href="#abstract">Abstract</a>
-              <a class="dropdown-item" href="#background">Background</a>
-              <a class="dropdown-item" href="#description">Model Description</a>
-              <a class="dropdown-item" href="#implementation">Technical Implementation</a>
-              <a class="dropdown-item" href="#installation">Installation and Requirements</a>
-              <a class="dropdown-item" href="#usage-notes">Usage Notes</a>
-              {% if project.release_notes %}
-                <a class="dropdown-item" href="#release-notes">Release Notes</a>
-              {% endif %}
-              {% if project.ethics_statement %}
-                <a class="dropdown-item" href="#ethics">Ethics</a>
-              {% endif %}
-              {% if project.acknowledgements %}
-                <a class="dropdown-item" href="#acknowledgements">Acknowledgements</a>
-              {% endif %}
-              <a class="dropdown-item" href="#conflicts-of-interest">Conflicts of Interest</a>
-              {% if references %}
-                <a class="dropdown-item" href="#references">References</a>
-              {% endif %}
+            {% endfor %}
+            {% if references %}
+              <a class="dropdown-item" href="#references">References</a>
             {% endif %}
             <a class="dropdown-item" href="#files">Files</a>
           </div>
@@ -268,10 +183,14 @@
             {% if project.access_policy == AccessPolicy.CREDENTIALED or project.access_policy == AccessPolicy.CONTRIBUTOR_REVIEW %}
               <p>
                 <strong>Required training:</strong>
-                {% for training in project.required_trainings.all %}
-                  <br>
-                  <a href="{% url 'published_project_required_training' project.slug project.version %}#{{ training.id }}"{{ training }}>{{ training }}</a>
-                {% endfor %}
+                {% if project.required_trainings.all|length > 0 %}
+                  {% for training in project.required_trainings.all %}
+                    <br>
+                    <a href="{% url 'published_project_required_training' project.slug project.version %}#{{ training.id }}"{{ training }}>{{ training }}</a>
+                  {% endfor %}
+                {% else %}
+                  <br>No training required
+                {% endif %}
               </p>
             {% endif %}
           </div>
@@ -372,8 +291,9 @@
     {% else %}
       {% if is_authorized %}
         {% if project.allow_file_downloads %}
-        {#  refactored code goes here            #}
-        <p>Total uncompressed size: {{ main_size }}.</p>
+          {% if project.main_storage_size %}
+            <p>Total uncompressed size: {{ main_size }}.</p>
+          {% endif %}
         {# ZIP START #}
         <h5>Access the files</h5>
         {% if project.access_policy == AccessPolicy.CONTRIBUTOR_REVIEW %}
@@ -385,41 +305,21 @@
         {% endif %}
 
         <ul>
-          {% if project.access_policy %}
-            {% if project.compressed_storage_size %}
+          {% if project.compressed_storage_size %}
             <li><a href="{% url 'serve_published_project_zip' project.slug project.version %}">Download
               the ZIP file</a> ({{ compressed_size }})
             </li>
-            {% endif %}
-          {% else %}
-            {% if project.gcp %}
-              {% if project.gcp.sent_zip %}
-                <!-- Temporary fix: Change default location to local servers -->
-                <!--
-                  <li><a href="https://storage.googleapis.com/{{ project.gcp.bucket_name }}/{{ project.zip_name }}">
-                      Download the ZIP file</a> ({{ compressed_size }}).</a></li>
-                  -->
-                <li><a href="{% static project.zip_url %}">Download the ZIP file</a>
-                  ({{ compressed_size }})
-                </li>
-              {% elif project.compressed_storage_size %}
-                <li><a href="{% static project.zip_url %}">Download the ZIP file</a>
-                  ({{ compressed_size }})
-                </li>
-              {% endif %}
-              {% if project.gcp.sent_files %}
-                <li>Access the files using the Google Cloud Storage Browser <a
-                  href="https://console.cloud.google.com/storage/browser/{{ project.gcp.bucket_name }}/">here</a>.
-                  Login with a Google account is required.
-                <li>
-                  Access the data using the Google Cloud command line tools (please refer to the <a
-                    href="https://cloud.google.com/storage/docs/gsutil_install">gsutil</a>
-                  documentation for guidance):
-                  <pre class="shell-command">gsutil -m -u YOUR_PROJECT_ID cp -r gs://{{ project.gcp.bucket_name }} DESTINATION</pre>
-                </li>
-              {% endif %}
-            {% elif project.compressed_storage_size %}
-              <li><a href="{% static project.zip_url %}">Download the ZIP file</a> ({{ compressed_size }})
+          {% endif %}
+          {% if not project.access_policy %}
+            {% if project.gcp.sent_files %}
+              <li>Access the files using the Google Cloud Storage Browser <a
+                href="https://console.cloud.google.com/storage/browser/{{ project.gcp.bucket_name }}/">here</a>.
+                Login with a Google account is required.
+              <li>
+                Access the data using the Google Cloud command line tools (please refer to the <a
+                  href="https://cloud.google.com/storage/docs/gsutil_install">gsutil</a>
+                documentation for guidance):
+                <pre class="shell-command">gsutil -m -u YOUR_PROJECT_ID cp -r gs://{{ project.gcp.bucket_name }} DESTINATION</pre>
               </li>
             {% endif %}
           {% endif %}
@@ -430,12 +330,30 @@
               <pre class="shell-command">wget -r -N -c -np{% if project.access_policy %} --user {{ user }} --ask-password{% endif %} {{ bulk_url_prefix }}{% url 'serve_published_project_file' project.slug project.version '' %}</pre>
             </li>
           {% endif %}
+
           {% if has_s3_credentials and project.aws.sent_files %}
+          {% if s3_uri %}
             <li>
               Download the files using AWS command line tools:
-              <pre class="shell-command">aws s3 sync --no-sign-request {{ project.aws.s3_uri }} DESTINATION</pre>
+              <pre class="shell-command">aws s3 sync {{ s3_uri }} DESTINATION</pre>
             </li>
-          {% endif %}  
+          {% elif show_aws_configuration_link %}
+            <li>
+              To download the files using AWS command line tools, first
+              <a href="{% url 'edit_cloud' %}">configure your AWS credentials</a>.
+            </li>
+          {% elif not user_in_access_point_policy %}
+            <li>
+              Click to access the files using AWS command line tools:
+              <form method="post" action="{% url 'enable_aws_access' project.slug project.version %}">
+                {% csrf_token %}
+                <button class="btn btn-primary btn-fixed" type="submit">
+                  Enable AWS access
+                </button>
+              </form>
+            </li>
+          {% endif %}
+          {% endif %}
 
         </ul>
         {# ZIP END #}

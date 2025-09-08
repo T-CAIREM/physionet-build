@@ -28,7 +28,9 @@ def update_event(request, event_slug, **kwargs):
     event = Event.objects.get(slug=event_slug)
 
     # if the event has dataset added to it, it cannot be edited
-    if event.datasets.exists():
+    if event.datasets.filter(is_active=True).exists():
+        if not can_change_event:
+            messages.error(request, "You don't have permission to edit this event")
         messages.error(request, "Event with datasets cannot be edited")
         return redirect(reverse('event_detail', args=[event_slug]))
 
@@ -133,7 +135,7 @@ def event_home(request):
 
             event_application = form.save(commit=False)
             event = event_application.event
-            # if user is not a host or a participant with cohort status, they don't have permission to accept/reject
+            # if user is not a host or a participant with cohost status, they don't have permission to accept/reject
             if not (
                 event.host == user
                 or EventParticipant.objects.filter(

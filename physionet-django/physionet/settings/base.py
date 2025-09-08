@@ -48,9 +48,17 @@ ORCID_LOGIN_ENABLED = config('ORCID_LOGIN_ENABLED', default=False, cast=bool)
 ORCID_OPEN_ID_JWKS_URL = config('ORCID_OPEN_ID_JWKS_URL', default="https://sandbox.orcid.org/oauth/jwks")
 ORCID_LOGIN_BUTTON_TEXT = config('ORCID_LOGIN_BUTTON_TEXT', default="Log in using ORCID iD")
 
+# Geographic restrictions
+# BLOCKED_REGIONS: Comma-separated list of region codes to block access from
+# Example: BLOCKED_REGIONS=localhost,RU,CN,IR,NK
+BLOCKED_REGIONS_STR = config('BLOCKED_REGIONS', default='')
+BLOCKED_REGIONS = set(
+    region.strip()
+    for region in BLOCKED_REGIONS_STR.split(',')
+    if region.strip()
+)
 
-# Application definition
-
+# Installed apps
 INSTALLED_APPS = [
     'dal',
     'dal_select2',
@@ -138,6 +146,7 @@ TEMPLATES = [
                 'physionet.context_processors.platform_config',
                 'sso.context_processors.sso_enabled',
                 'physionet.context_processors.cloud_research_environments_config',
+                'physionet.context_processors.homepage_config'
             ],
             'debug': DEBUG,
         },
@@ -218,7 +227,7 @@ MAX_ATTEMPTS = 5
 
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [os.path.join(BASE_DIR,'static')]
-# Google Storge service account credentials
+# Google Storage service account credentials
 if config('GOOGLE_APPLICATION_CREDENTIALS', default=None):
     GOOGLE_APPLICATION_CREDENTIALS = os.path.join(
         BASE_DIR,
@@ -278,6 +287,9 @@ S3_OPEN_ACCESS_BUCKET = config('S3_OPEN_ACCESS_BUCKET', default=None)
 
 # Bucket name to store logs and metrics related to project usage.
 S3_SERVER_ACCESS_LOG_BUCKET = config('S3_SERVER_ACCESS_LOG_BUCKET', default=None)
+
+# Bucket name for the S3 bucket containing the controlled access data
+S3_CONTROLLED_ACCESS_BUCKET = config('S3_CONTROLLED_ACCESS_BUCKET', default=None)
 
 # Header tags for the AWS lambda function that grants access to S3 storage
 AWS_HEADER_KEY = config('AWS_KEY', default=False)
@@ -675,7 +687,7 @@ if os.getenv('PHYSIONET_LOCK_FILE'):
                       os.O_RDWR | os.O_CREAT, 0o660)
     # Note that Python has at least three different ways of locking
     # files.  We want fcntl.flock (i.e. flock(2)), which is tied to
-    # the file desciptor and inherited by child processes.  In
+    # the file descriptor and inherited by child processes.  In
     # contrast, fcntl.lockf uses fcntl(2) and os.lockf uses lockf(3),
     # both of which are tied to the PID.
     fcntl.flock(_lockfd, fcntl.LOCK_SH)
@@ -705,6 +717,10 @@ if ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
 
 SITE_NAME = config('SITE_NAME')
 STRAPLINE = config('STRAPLINE')
+SITE_HEADER_LOGO = config('SITE_HEADER_LOGO', default=None)
+SITE_FOOTER_LOGO = config('SITE_FOOTER_LOGO', default=None)
+
+SITE_DESCRIPTION = config('SITE_DESCRIPTION', default=None)
 EMAIL_SIGNATURE = config('EMAIL_SIGNATURE')
 FOOTER_MANAGED_BY = config('FOOTER_MANAGED_BY')
 FOOTER_SUPPORTED_BY = config('FOOTER_SUPPORTED_BY')
@@ -718,6 +734,11 @@ LOG_TIMEDELTA = config('LOG_TIMEDELTA', cast=int, default='10')
 # Ticket system for user support
 TICKET_SYSTEM_URL = config('TICKET_SYSTEM_URL', default=None)
 
+# Platform Research Resource Identifier: https://rrid.site/
+# Added to citations to support tracking of reuse.
+# e.g. PhysioNet is "SCR_007345"
+PLATFORM_RRID = config('PLATFORM_RRID', default=None)
+
 #  Platform wide citation config
 PLATFORM_WIDE_CITATION = {
     'APA': config('PLATFORM_WIDE_CITATION_APA', default=None),
@@ -730,6 +751,15 @@ PLATFORM_WIDE_CITATION = {
 SOURCE_CODE_REPOSITORY_LINK = config('SOURCE_CODE_REPOSITORY_LINK',
                                      default='https://github.com/MIT-LCP/physionet-build')
 MAX_TRAINING_REPORT_UPLOAD_SIZE = config('MAX_TRAINING_REPORT_UPLOAD_SIZE', cast=int, default=1048576)
+
+# Homepage config
+GITHUB_LINK = config('GITHUB_LINK', cast=str, default=None)
+X_LINK = config('X_LINK', cast=str, default=None)
+LINKEDIN_LINK = config('LINKEDIN_LINK', cast=str, default=None)
+FACEBOOK_LINK = config('FACEBOOK_LINK', cast=str, default=None)
+
+TERMS_AND_CONDITIONS_LINK = config('TERMS_AND_CONDITIONS_LINK', cast=str, default=None)
+PRIVACY_POLICY_URL = config('PRIVACY_POLICY_URL', cast=str, default=None)
 
 # User model configurable settings
 MAX_EMAILS_PER_USER = config('MAX_EMAILS_PER_USER', cast=int, default=10)
@@ -754,3 +784,31 @@ ALLOWED_ACCESS_POLICIES = config(
     'ALLOWED_ACCESS_POLICIES',
     default='OPEN,RESTRICTED,CREDENTIALED,CONTRIBUTOR_REVIEW'
 ).split(',')
+
+# OAUTH_CLIENT_APP_NAME is the name of the default OAuth application used
+# when programmatically generating access tokens (e.g., via the /settings/tokens).
+OAUTH_CLIENT_APP_NAME = config('OAUTH_CLIENT_APP_NAME', default='')
+
+# OAUTH PROVIDER SCOPES
+OAUTH2_PROVIDER = {
+    "SCOPES": {
+        "profile:read": "Read access to user's profile (username, full name)",
+        "email:read": "Read access to user's email address",
+        "institution:read": "Read access to user's institutional affiliation",
+        "credentialing:read": "Read access to user's credentialing and training status",
+        "orcid:read": "Read access to user's ORCID iD",
+        "public_id:read": "Read access to the user's persistent public ID",
+        "data:download": "Download project data if token-holder is approved for access (training, DUA, etc).",
+    }
+}
+
+# Path to GeoIP2 database directory
+GEOIP_PATH = config('GEOIP_PATH', default=None)
+
+# Validate GeoIP configuration
+if BLOCKED_REGIONS and any(region != 'localhost' for region in BLOCKED_REGIONS):
+    if not GEOIP_PATH:
+        raise RuntimeError(
+            "BLOCKED_REGIONS is set to block real countries, but GEOIP_PATH is not configured. "
+            "Please set GEOIP_PATH to the directory containing your GeoIP2 database files."
+        )

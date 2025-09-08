@@ -82,7 +82,6 @@ from project.cloud.s3 import (
     upload_project_to_S3,
     get_bucket_name,
     check_s3_bucket_exists,
-    update_bucket_policy,
     has_s3_credentials,
 )
 
@@ -492,8 +491,7 @@ def copyedit_submission(request, project_slug, *args, **kwargs):
                                                        can_delete=False,
                                                        formset=project_forms.PublicationFormSet, validate_max=True)
 
-    description_form = project_forms.ContentForm(
-        resource_type=project.resource_type.id, instance=project)
+    description_form = project_forms.ContentForm(instance=project)
     ethics_form = project_forms.EthicsForm(instance=project)
 
     access_policy = request.GET.get('accessPolicy')
@@ -514,8 +512,9 @@ def copyedit_submission(request, project_slug, *args, **kwargs):
     if request.method == 'POST':
         if 'edit_content' in request.POST:
             description_form = project_forms.ContentForm(
-                resource_type=project.resource_type.id, data=request.POST,
-                instance=project)
+                data=request.POST,
+                instance=project,
+            )
             ethics_form = project_forms.EthicsForm(data=request.POST, instance=project)
             access_form = project_forms.AccessMetadataForm(data=request.POST,
                                                            instance=project)
@@ -727,6 +726,10 @@ def publish_submission(request, project_slug, *args, **kwargs):
     if request.method == 'POST':
         publish_form = forms.PublishForm(project=project, data=request.POST)
         if project.is_publishable() and publish_form.is_valid():
+
+            project.georestricted = publish_form.cleaned_data['georestricted']
+            project.save()
+
             if project.is_new_version:
                 slug = project.get_previous_slug()
             else:
@@ -844,14 +847,23 @@ def unsubmitted_projects(request):
 
 
 @console_permission_required('project.change_publishedproject')
-def published_projects(request):
+def published_projects(request, project_slug=None):
     """
     List of published projects
     """
-    projects = PublishedProject.objects.all().order_by('-publish_datetime')
+    if project_slug is None:
+        projects = PublishedProject.objects.all()
+    else:
+        projects = PublishedProject.objects.filter(slug=project_slug)
+        if projects.count() == 0:
+            raise Http404
+
+    projects = projects.order_by('-publish_datetime')
     projects = paginate(request, projects, 50)
-    return render(request, 'console/published_projects.html',
-                  {'projects': projects})
+    return render(request, 'console/published_projects.html', {
+        'projects': projects,
+        'project_slug': project_slug,
+    })
 
 
 @associated_task(PublishedProject, 'pid', read_only=True)
@@ -859,7 +871,7 @@ def published_projects(request):
 def send_files_to_gcp(pid):
     """
     Schedule a background task to send the files to GCP.
-    This function can be runned manually to force a re-send of all the files
+    This function can be run manually to force a re-send of all the files
     to GCP. It only requires the Project ID.
     """
     project = PublishedProject.objects.get(id=pid)
@@ -900,44 +912,6 @@ def send_files_to_aws(pid):
     if project.compressed_storage_size:
         project.aws.sent_zip = True
     project.aws.save()
-
-
-@associated_task(PublishedProject, "pid", read_only=True)
-@background()
-def update_aws_bucket_policy(pid):
-    """
-    Update the AWS S3 bucket's access policy based on the
-    project's access policy.
-
-    This function determines the access policy of the project identified
-    by 'pid' and updates the AWS S3 bucket's access policy accordingly.
-    It checks if the bucket exists, retrieves its name, and uses the
-    'utility.update_bucket_policy' function for the update.
-
-    Args:
-        pid (int): The unique identifier (ID) of the project for which to
-        update the bucket policy.
-
-    Returns:
-        bool: True if the bucket policy was updated successfully,
-        False otherwise.
-
-    Note:
-    - Verify that AWS credentials and configurations are correctly set up
-    for the S3 client.
-    - The 'updated_policy' variable indicates whether the policy was
-    updated successfully.
-    """
-    updated_policy = False
-    project = PublishedProject.objects.get(id=pid)
-    exists = check_s3_bucket_exists(project)
-    if exists:
-        bucket_name = get_bucket_name(project)
-        update_bucket_policy(project, bucket_name)
-        updated_policy = True
-    else:
-        updated_policy = False
-    return updated_policy
 
 
 @console_permission_required('project.change_publishedproject')
@@ -1226,7 +1200,6 @@ def aws_bucket_management(request, project, user):
         is_private = False
 
     bucket_name = get_bucket_name(project)
-
     if not AWS.objects.filter(project=project).exists():
         AWS.objects.create(
             project=project, bucket_name=bucket_name, is_private=is_private
@@ -2635,11 +2608,11 @@ def download_credentialed_users(request):
         elif 'eicu' in person.project.slug:
             eicu_signature_date = person.sign_datetime
         if person.user.id in added:
-            for indx, item in enumerate(dua_info_csv):
+            for index, item in enumerate(dua_info_csv):
                 if item[2] == person.user.email and item[5] == None:
-                    dua_info_csv[indx][5] = mimic_signature_date
+                    dua_info_csv[index][5] = mimic_signature_date
                 elif item[2] == person.user.email and item[6] == None:
-                    dua_info_csv[indx][6] = eicu_signature_date
+                    dua_info_csv[index][6] = eicu_signature_date
         else:
             if application:
                 dua_info_csv.append([person.user.profile.first_names,
@@ -2978,7 +2951,7 @@ class ProjectAutocomplete(autocomplete.Select2QuerySetView):
 @console_permission_required('user.change_credentialapplication')
 def known_references(request):
     """
-    List all known references witht he option of removing the contact date
+    List all known references with he option of removing the contact date
     """
     user = request.user
 

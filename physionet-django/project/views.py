@@ -49,17 +49,21 @@ from project.models import (
     SubmissionStatus,
     Topic,
     UploadedDocument,
+    AWS,
 )
 from project.authorization.access import can_view_project_files, can_access_project
 from project.projectfiles import ProjectFiles
 from project.validators import validate_filename, validate_gcs_bucket_object
 from user.forms import AssociatedEmailChoiceForm
-from user.models import AssociatedEmail, CloudInformation, CredentialApplication, LegacyCredential, Training
+from user.models import AssociatedEmail, CloudInformation, CredentialApplication, Training
 from project.cloud.s3 import (
     has_s3_credentials,
     files_sent_to_S3,
+    add_user_to_access_point_policy,
 )
 from django.db.models import F, DateTimeField, ExpressionWrapper
+from physionet.utility import get_client_ip, get_country_code
+from user.awsverification import aws_verification_available
 
 LOGGER = logging.getLogger(__name__)
 
@@ -764,15 +768,16 @@ def project_content(request, project_slug, **kwargs):
         max_num=forms.ReferenceFormSet.max_forms, can_delete=False,
         formset=forms.ReferenceFormSet, validate_max=True)
 
-    description_form = forms.ContentForm(resource_type=project.resource_type.id,
-                                         instance=project, editable=editable)
+    description_form = forms.ContentForm(instance=project, editable=editable)
     reference_formset = ReferenceFormSet(instance=project)
     saved = False
 
     if request.method == 'POST':
         description_form = forms.ContentForm(
-            resource_type=project.resource_type.id, data=request.POST,
-            instance=project, editable=editable)
+            data=request.POST,
+            instance=project,
+            editable=editable,
+        )
         reference_formset = ReferenceFormSet(request.POST, instance=project)
         if description_form.is_valid() and reference_formset.is_valid():
             saved = True
@@ -1029,6 +1034,7 @@ def project_files_panel(request, project_slug, **kwargs):
             'is_submitting': is_submitting,
             'is_editor': is_editor,
             'files_editable': files_editable,
+            'max_files_per_upload': settings.DATA_UPLOAD_MAX_NUMBER_FILES,
             'individual_size_limit': utility.readable_size(ActiveProject.INDIVIDUAL_FILE_SIZE_LIMIT),
         },
     )
@@ -1149,6 +1155,7 @@ def project_files(request, project_slug, subdir='', **kwargs):
         'project/project_files.html',
         {
             'project': project,
+            'max_files_per_upload': settings.DATA_UPLOAD_MAX_NUMBER_FILES,
             'individual_size_limit': utility.readable_size(ActiveProject.INDIVIDUAL_FILE_SIZE_LIMIT),
             'subdir': subdir,
             'parent_dir': parent_dir,
@@ -1662,7 +1669,7 @@ def published_files_panel(request, project_slug, version):
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if can_view_project_files(project, user) or has_passphrase:
+    if can_view_project_files(project, user, request) or has_passphrase:
         (display_files, display_dirs, dir_breadcrumbs, parent_dir,
          file_error) = get_project_file_info(project=project, subdir=subdir)
 
@@ -1681,6 +1688,7 @@ def published_files_panel(request, project_slug, version):
              'files_panel_url':files_panel_url, 'file_error':file_error})
     else:
         raise Http404()
+
 
 def serve_active_project_file_editor(request, project_slug, full_file_name):
     """
@@ -1709,6 +1717,7 @@ def serve_active_project_file_editor(request, project_slug, full_file_name):
 
     return utility.require_http_auth(request)
 
+
 def serve_published_project_file(request, project_slug, version,
         full_file_name):
     """
@@ -1729,7 +1738,7 @@ def serve_published_project_file(request, project_slug, version,
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if can_view_project_files(project, user) or has_passphrase:
+    if can_view_project_files(project, user, request) or has_passphrase:
         file_path = os.path.join(project.file_root(), full_file_name)
         try:
             attach = ('download' in request.GET)
@@ -1772,12 +1781,13 @@ def display_published_project_file(request, project_slug, version,
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if can_view_project_files(project, user) or has_passphrase:
+    if can_view_project_files(project, user, request) or has_passphrase:
         return display_project_file(request, project, full_file_name)
 
     # Display error message: "you must [be a credentialed user and]
     # sign the data use agreement"
     breadcrumbs = utility.get_dir_breadcrumbs(full_file_name, directory=False)
+
     context = {
         'project': project,
         'breadcrumbs': breadcrumbs,
@@ -1805,7 +1815,7 @@ def serve_published_project_zip(request, project_slug, version):
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60*60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    if can_view_project_files(project, user) or has_passphrase:
+    if can_view_project_files(project, user, request) or has_passphrase:
         try:
             return serve_file(project.zip_name(full=True))
         except FileNotFoundError:
@@ -1868,6 +1878,17 @@ def published_project_latest(request, project_slug):
         version=version)
 
 
+def is_user_country_blocked(project, request):
+    """
+    Helper function to check if user is from a georestricted country.
+    """
+    if not project.georestricted or not request:
+        return False
+    ip = get_client_ip(request)
+    country_code = get_country_code(ip)
+    return country_code in settings.BLOCKED_REGIONS
+
+
 def published_project(request, project_slug, version, subdir=''):
     """
     Displays a published project
@@ -1901,8 +1922,12 @@ def published_project(request, project_slug, version, subdir=''):
     an_url = request.get_signed_cookie('anonymousaccess', None, max_age=60 * 60)
     has_passphrase = project.get_anonymous_url() == an_url
 
-    can_view_files = can_view_project_files(project, user) or has_passphrase
-    is_authorized = can_access_project(project, user) or has_passphrase
+    can_view_files = can_view_project_files(project, user, request) or has_passphrase
+    is_authorized = can_access_project(project, user, request) or has_passphrase
+
+    # Check if user is from a blocked country
+    user_country_blocked = is_user_country_blocked(project, request)
+
     has_signed_dua = False if not user.is_authenticated else DUASignature.objects.filter(
         project=project,
         user=user
@@ -1927,6 +1952,42 @@ def published_project(request, project_slug, version, subdir=''):
     current_site = get_current_site(request)
     bulk_url_prefix = notification.get_url_prefix(request, bulk_download=True)
     all_project_versions = PublishedProject.objects.filter(slug=project_slug).order_by('version_order')
+
+    s3_uri = None
+    try:
+        if project.aws.is_private:
+            if has_signed_dua and request.user.is_authenticated:
+                access_point = project.aws.access_points.filter(linked_users__user=request.user).first()
+                if access_point:
+                    s3_uri = access_point.private_s3_uri()
+        else:
+            s3_uri = '--no-sign-request ' + project.aws.public_s3_uri()
+    except AWS.DoesNotExist:
+        s3_uri = None
+
+    # Determine when to show AWS configuration link
+    try:
+        show_aws_configuration_link = (
+            not s3_uri
+            and project.aws.sent_files
+            and project.aws.is_private
+            and aws_verification_available()
+            and (
+                not hasattr(user, 'cloud_information')
+                or not user.cloud_information.aws_verification_datetime
+            )
+        )
+    except AWS.DoesNotExist:
+        show_aws_configuration_link = False
+
+    user_in_access_point_policy = False
+    try:
+        aws_instance = project.aws
+        if aws_instance.is_private:
+            user_in_access_point_policy = aws_instance.user_in_access_point_policy(user)
+    except AWS.DoesNotExist:
+        user_in_access_point_policy = False
+
     context = {
         'project': project,
         'authors': authors,
@@ -1954,8 +2015,12 @@ def published_project(request, project_slug, version, subdir=''):
         'is_lightwave_supported': project.files.is_lightwave_supported(),
         'is_wget_supported': project.files.is_wget_supported(),
         'has_s3_credentials': has_s3_credentials(),
+        's3_uri': s3_uri,
+        'user_in_access_point_policy': user_in_access_point_policy,
+        'show_aws_configuration_link': show_aws_configuration_link,
         'show_platform_wide_citation': show_platform_wide_citation,
         'main_platform_citation': main_platform_citation,
+        'user_country_blocked': user_country_blocked,
     }
     # The file and directory contents
     if can_view_files:
@@ -2010,7 +2075,6 @@ def sign_dua(request, project_slug, version):
     Page to sign the dua for a protected project.
     Both restricted and credentialed policies.
     """
-    from console.views import update_aws_bucket_policy
     user = request.user
     project = PublishedProject.objects.filter(slug=project_slug, version=version)
     if project:
@@ -2022,7 +2086,7 @@ def sign_dua(request, project_slug, version):
         project.deprecated_files
         or project.embargo_active()
         or project.access_policy not in {AccessPolicy.RESTRICTED, AccessPolicy.CREDENTIALED}
-        or can_access_project(project, user)
+        or can_access_project(project, user, request)
     ):
         return redirect('published_project',
                         project_slug=project_slug, version=version)
@@ -2032,11 +2096,16 @@ def sign_dua(request, project_slug, version):
 
     license = project.license
     license_content = project.license_content(fmt='html')
-
     if request.method == 'POST' and 'agree' in request.POST:
         DUASignature.objects.create(user=user, project=project)
-        if has_s3_credentials() and files_sent_to_S3(project) is not None:
-            update_aws_bucket_policy(project.id)
+        if has_s3_credentials() and files_sent_to_S3(project):
+            if (
+                hasattr(user, 'cloud_information')
+                and user.cloud_information is not None
+                and user.cloud_information.aws_verification_datetime is not None
+            ):
+                add_user_to_access_point_policy(project, user)
+
         return render(request, 'project/sign_dua_complete.html', {
             'project':project})
 
@@ -2055,12 +2124,12 @@ def request_data_access(request, project_slug, version):
         return redirect('published_project', project_slug=project_slug, version=version)
 
     if request.method == 'POST':
-        access_request_form = forms.DataAccessRequestForm(
+        project_request_form = forms.DataAccessRequestForm(
             project=project, requester=request.user, template=None, prefix="proj", data=request.POST
         )
 
-        if access_request_form.is_valid():
-            access_request = access_request_form.save()
+        if project_request_form.is_valid():
+            access_request = project_request_form.save()
 
             corresponding_author = project.corresponding_author().user
             reviewers = [reviewer.reviewer for reviewer in DataAccessRequestReviewer.objects.filter(
@@ -2073,7 +2142,7 @@ def request_data_access(request, project_slug, version):
             notification.confirm_user_data_access_request(access_request, request.scheme, request.get_host())
 
             response = render(request, 'project/data_access_request_submitted.html', {'project': project})
-            set_saved_fields_cookie(access_request_form, request.path, response)
+            set_saved_fields_cookie(project_request_form, request.path, response)
 
             return response
     else:
@@ -2190,6 +2259,55 @@ def data_access_requests_overview(request, project_slug, version):
                    'requests': all_requests,
                    'accepted_requests': accepted_requests,
                    'is_additional_reviewer': proj.is_data_access_reviewer(reviewer)})
+
+
+@login_required
+def enable_aws_access(request, project_slug, version):
+    """
+    Enable AWS access for a user by adding them to the access point policy.
+    """
+    user = request.user
+    try:
+        project = PublishedProject.objects.get(slug=project_slug, version=version)
+    except PublishedProject.DoesNotExist:
+        messages.error(request, 'Project not found.')
+        return redirect('project_home')
+
+    # Verify if the user has access to the project
+    if not can_view_project_files(project, user, request):
+        messages.error(request, 'You do not have permission to access this project.')
+        return redirect('published_project', project_slug=project_slug, version=version)
+
+    if request.method == 'POST':
+        if has_s3_credentials() and files_sent_to_S3(project):
+            if (
+                hasattr(user, 'cloud_information')
+                and user.cloud_information is not None
+                and user.cloud_information.aws_verification_datetime is not None
+            ):
+                try:
+                    result = add_user_to_access_point_policy(project, user)
+                    if result:
+                        messages.success(
+                            request,
+                            'AWS access has been enabled! You can now download files using AWS CLI.'
+                        )
+                    else:
+                        messages.error(
+                            request,
+                            'Failed to enable AWS access.'
+                        )
+                except Exception as e:
+                    messages.error(
+                        request,
+                        f'An error occurred while enabling AWS access: {str(e)}'
+                    )
+            else:
+                messages.error(request, 'Please configure and verify your AWS credentials first.')
+        else:
+            messages.error(request, 'AWS access is not available for this project.')
+
+    return redirect('published_project', project_slug=project_slug, version=version)
 
 
 @login_required
@@ -2323,14 +2441,16 @@ def published_project_request_access(request, project_slug, version, access_type
                                             platform=access_type)
 
     # Check if the person has access to the project.
-    if not can_access_project(project, user):
+    if not can_access_project(project, user, request):
         return redirect('published_project', project_slug=project_slug,
             version=version)
 
     try:
         # check user if user has GCP or AWS info in profile
-        if (user.cloud_information.gcp_email is None and access_type in [3, 4]) or (
-            user.cloud_information.aws_id is None and access_type == 2):
+        if (
+            (user.cloud_information.gcp_email is None and access_type in [3, 4])
+            or (user.cloud_information.aws_verification_datetime is None and access_type == 2)
+        ):
             messages.error(request, 'Please set the user cloud information in your settings')
             return redirect('edit_cloud')
     except CloudInformation.DoesNotExist:
