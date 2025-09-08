@@ -1,0 +1,28 @@
+form > label {
+    font-weight: bold;
+    margin-top: 1rem;
+}
+
+.environment-type {
+    width: 24px;
+    display: inline;
+    list-style-type: none;
+}
+
+.container-body {
+    display: flex;
+    gap: 1rem;
+}
+
+.billing-information {
+    width: 35%;
+    min-width: 15rem;
+}
+
+.hidden {
+    display: none;
+}
+
+#id_gpu_accelerated {
+    width: auto;
+}
