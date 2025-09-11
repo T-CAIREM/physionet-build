@@ -1,25 +1,44 @@
+:root {
+  --primary-color: #337ab7;
+  --secondary-color: #1E3765;
+  --light-color: #f8f8f8;
+  --gray-color: #5A6268;
+  --rose-100: #d8e4f4;
+  --error-color: #dc3545;
+  --warning-color: #ffc107;
+  --info-color: #0c5460;
+}
+
 .jumbotron {
   text-align: center;
   background-color: transparent;
-  padding: 5px 20px;
+  padding: 1.75rem 1.5rem;
+  margin-bottom: 1.5rem;
 }
+
+.jumbotron h1 {
+  color: var(--secondary-color);
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.jumbotron p.lead {
+  color: var(--gray-color);
+  font-size: 1.1rem;
+}
+
 .jumbotron .btn {
-  padding: 10px 20px;
-}
-
-html,
-body {
-  overflow-x: hidden; /* Prevent scroll on narrow devices */
-}
-
-footer {
-  margin-top: 30px;
-  padding: 10px 0;
+  padding: 0.5rem 1rem;
+  border-radius: 50rem;
+  font-weight: 600;
 }
 
 .btn-fixed {
-    min-width: 200px;
-    max-width: 200px;
+  min-width: 200px;
+  max-width: 200px;
+  border-radius: 50rem;
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
 }
 
 input, select, django-ckeditor-widget textarea {
@@ -33,7 +52,7 @@ input, select, django-ckeditor-widget textarea {
   background-image: none;
   background-clip: padding-box;
   border: 1px solid rgba(0, 0, 0, 0.15);
-  border-radius: 0.25rem;
+  border-radius: 0.5rem;
   transition: border-color ease-in-out 0.15s, box-shadow ease-in-out 0.15s;
 }
 
@@ -45,8 +64,9 @@ input::-ms-expand {
 input:focus {
   color: #495057;
   background-color: #fff;
-  border-color: #80bdff;
+  border-color: var(--primary-color);
   outline: none;
+  box-shadow: 0 0 0 0.2rem rgba(51, 122, 183, 0.25);
 }
 
 input::-webkit-input-placeholder {
@@ -62,4 +82,97 @@ input:-ms-input-placeholder {
 input::placeholder {
   color: #868e96;
   opacity: 1;
+}
+
+/* Card styling */
+.card {
+  border: none;
+  box-shadow: 0px 4px 10px 0px #0000001F;
+  border-radius: 0.3rem;
+  margin-bottom: 1.5rem;
+}
+
+.card-header {
+  font-weight: 600;
+  background-color: white;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  color: var(--secondary-color);
+  padding: 1rem 1.25rem;
+}
+
+.card-body {
+  padding: 1.25rem;
+}
+
+/* List group styling */
+.list-group-item {
+  border-color: rgba(0, 0, 0, 0.05);
+}
+
+.list-group-item:hover {
+  background-color: var(--rose-100);
+}
+
+.list-group-item h3 {
+  color: var(--secondary-color);
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.list-group-item .text-muted {
+  color: var(--gray-color) !important;
+}
+
+.list-group-item .btn {
+  border-radius: 50rem;
+  padding: 0.25rem 0.75rem;
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
+  margin-right: 0.25rem;
+  font-size: 0.85rem;
+}
+
+/* Footer styling */
+footer {
+  margin-top: 30px;
+  padding: 10px 0;
+  color: var(--gray-color);
+}
+
+/* Responsive styles */
+html, body {
+  overflow-x: hidden; /* Prevent scroll on narrow devices */
+}
+
+/* Modal styling */
+.modal-content {
+  border: none;
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.modal-header {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 1rem 1.25rem;
+}
+
+.modal-header h5 {
+  color: var(--secondary-color);
+  font-weight: 600;
+}
+
+.modal-body {
+  padding: 1.25rem;
+}
+
+.modal-footer {
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 0.75rem 1.25rem;
+}
+
+@media (min-width: 576px) {
+  .modal-dialog.citation {
+    max-width: 800px;
+  }
 }

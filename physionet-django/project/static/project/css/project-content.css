@@ -1,60 +1,113 @@
-/*.citation {
-  margin-top: 0.25rem !important;
-  margin-left: 3rem !important;
-  margin-right: 3rem !important;
-  background: rgb(230, 230, 230) !important;
-}*/
+/* Project Content CSS with Modern UI styling */
 
+/* Variables for consistent styling with the rest of the site */
+:root {
+  --primary-color: #337ab7;
+  --secondary-color: #1E3765;
+  --light-color: #f8f8f8;
+  --gray-color: #5A6268;
+  --rose-100: #d8e4f4;
+  --error-color: #dc3545;
+  --warning-color: #ffc107;
+  --info-color: #0c5460;
+}
+
+/* Blockquote styling */
 blockquote {
   display: block;
-  margin-top: 1em;
-  margin-bottom: 1em;
-  padding-left: 40px;
-  padding-right: 40px;
-  background: #F0F0F0;
+  margin: 1.5rem 0;
+  padding: 1.25rem 2.5rem;
+  background: var(--light-color);
+  border-left: 4px solid var(--primary-color);
+  border-radius: 0.3rem;
+  color: var(--gray-color);
 }
 
+/* Checkbox styling */
 input[type="checkbox"] {
   width: auto;
-  margin-top: 6px;
+  margin-top: 0.375rem;
+  margin-right: 0.5rem;
 }
 
-@media (min-width: 768px){
-  .btn-right{
+/* Citation styling */
+.citation {
+  background: var(--light-color);
+  border-radius: 0.3rem;
+  padding: 1rem;
+  margin: 1rem 0;
+  font-family: monospace;
+  font-size: 0.9rem;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+/* Responsive layout adjustments */
+@media (min-width: 768px) {
+  .btn-right {
     float: right;
   }
 
-  .name{
-    padding-left: 2.5em;
+  .name {
+    padding-left: 2.5rem;
   }
 
-  .row > .col-md-8{
+  .row > .col-md-8 {
     padding-left: 0;
   }
 
-  .row > .col-md-4{
+  .row > .col-md-4 {
     padding-right: 0;
   }
 }
 
-@media (max-width: 767px){
-  .list-group, .list-group .row{
+@media (max-width: 767px) {
+  .list-group, .list-group .row {
     display: block;
   }
 
-  .dropdown-menu.show{
+  .dropdown-menu.show {
     transform: unset !important;
     width: 100%;
-    margin-bottom: 20px;
+    margin-bottom: 1.25rem;
   }
 
-  .row > .col-md-8, .row > .col-md-4{
+  .row > .col-md-8, .row > .col-md-4 {
     padding: 0;
   }
 }
 
+/* Modal citation styling */
 @media (min-width: 576px) {
   .modal-dialog.citation {
     max-width: 800px;
   }
+}
+
+/* Button styling */
+.btn {
+  border-radius: 50rem;
+  padding: 0.375rem 0.75rem;
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.btn-primary:hover {
+  background-color: #2a6496;
+}
+
+.btn-outline-primary {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+  background-color: transparent;
+}
+
+.btn-outline-primary:hover {
+  color: white;
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
 }
