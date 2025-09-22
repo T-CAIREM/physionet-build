@@ -334,4 +334,20 @@ urlpatterns = [
         react_views.identity_provisioning,
         name="react_views.identity_provisioning",
     ),
+    path("api/static-pages/", react_views.api_static_pages, name="api_static_pages"),
+    path(
+        "api/front-page-buttons/",
+        react_views.api_front_page_buttons,
+        name="api_front_page_buttons",
+    ),
+    path(
+        "api/environment/collaborative/<workspace_project_id>/<environment_name>/<service_account_name>/",
+        react_views.manage_collaborative_environment_api,
+        name="react_views.manage_collaborative_environment_api",
+    ),
+    path(
+        "api/environment/leave/",
+        react_views.leave_shared_environment,
+        name="api_leave_shared_environment",
+    ),
 ]

@@ -2,6 +2,7 @@ from dataclasses import asdict
 from typing import Iterable, Dict, Union
 from django.forms.models import model_to_dict
 from django.contrib.auth import get_user_model
+from physionet.models import StaticPage, FrontPageButton
 
 
 from environment.entities import (
@@ -44,6 +45,7 @@ def serialize_workspace_details(workspace: ResearchWorkspace):
             else serialize_entity_scaffolding(wb)
             for wb in workspace.workbenches
         ],
+        "is_owner": workspace.is_owner,
     }
 
 
@@ -64,6 +66,9 @@ def serialize_workbench(workbench):
         "machine_type": workbench.machine_type,
         "disk_size": workbench.disk_size,
         "gpu_accelerator_type": workbench.gpu_accelerator_type,
+        "workbench_owner_username": workbench.workbench_owner_username,
+        "service_account_name": workbench.service_account_name,
+        "is_running": workbench.is_running,
     }
 
 
@@ -191,4 +196,66 @@ def serialize_quotas(objects: Iterable[QuotaInfo]) -> list[Dict]:
             "usage_percentage": obj.usage_percentage,
         }
         for obj in objects
+    ]
+
+
+def serialize_static_pages(pages: StaticPage) -> list[Dict]:
+    return [
+        {
+            "id": page.id,
+            "title": page.title,
+            "url": page.url,
+            "nav_bar": page.nav_bar,
+            "nav_order": page.nav_order,
+        }
+        for page in pages
+    ]
+
+def serialize_front_page_buttons(buttons: FrontPageButton) -> list[Dict]:
+    return [
+        {
+            "id": button.id,
+            "label": button.label,
+            "url": button.url,
+            "description": button.description,
+            "associated_image_path": button.associated_image_path,
+        }
+        for button in buttons
+    ]
+
+
+def serialize_instance_projected_costs(
+    vm_instances: Iterable[VMInstance], ProjectedWorkbenchCost
+) -> list[dict]:
+    return [
+        {
+            "id": instance.id,
+            "projected_cost": ProjectedWorkbenchCost(
+                instance.id, instance.price
+            )._asdict(),
+        }
+        for instance in vm_instances
+    ]
+
+
+def serialize_gpu_projected_costs(
+    gpu_accelerators: Iterable, ProjectedWorkbenchCost
+) -> list[dict]:
+    return [
+        {
+            "name": gpu.name,
+            "projected_cost": ProjectedWorkbenchCost(gpu.name, gpu.price)._asdict(),
+        }
+        for gpu in gpu_accelerators
+    ]
+
+
+def serialize_notifications(notifications) -> list[Dict]:
+    return [
+        {
+            "id": notification.get("id"),
+            "email": notification.get("email"),
+            "timestamp": notification.get("timestamp"),
+        }
+        for notification in notifications
     ]

@@ -9,6 +9,7 @@ import json
 import re
 
 from environment.utilities import user_has_cloud_identity
+import environment.constants as constants
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, HttpResponse, Http404
 from django.views.decorators.http import require_GET, require_POST
@@ -32,6 +33,7 @@ from environment.decorators import (
     require_PATCH,
     billing_account_required,
 )
+from physionet.models import StaticPage, FrontPageButton
 
 User = get_user_model()
 PublishedProject = apps.get_model("project", "PublishedProject")
@@ -153,13 +155,23 @@ def get_environment_resource_options(request):
     serialized_available_instances = serializers.serialize_vm_instances(
         VMInstance.objects.all()
     )
-    serialized_available_gpu_accelerators = serializers.serialize_gpu_accelerators(
-        GPUAccelerator.objects.all()
+    instance_projected_costs = serializers.serialize_instance_projected_costs(
+        VMInstance.objects.all(), constants.ProjectedWorkbenchCost
     )
+    gpu_projected_costs = serializers.serialize_gpu_projected_costs(
+        GPUAccelerator.objects.all(), constants.ProjectedWorkbenchCost
+    )
+    data_storage_projected_costs = {
+        str(region.value): cost._asdict()
+        for region, cost in constants.DATA_STORAGE_PROJECTED_COSTS.items()
+    }
+
     return JsonResponse(
         {
             "instances": serialized_available_instances,
-            "accelerators": serialized_available_gpu_accelerators,
+            "instance_projected_costs": instance_projected_costs,
+            "gpu_projected_costs": gpu_projected_costs,
+            "data_storage_projected_costs": data_storage_projected_costs,
         }
     )
 
@@ -211,6 +223,7 @@ def create_research_environment(request, workspace_project_id):
             disk_size=form.cleaned_data.get("disk_size"),
             gpu_accelerator_type=form.cleaned_data.get("gpu_accelerator"),
             sharing_bucket_identifiers=form.cleaned_data.get("shared_bucket"),
+            collaborators=form.cleaned_data.get("users_list", []),
         )
         return HttpResponse(status=202)
     else:
@@ -230,6 +243,19 @@ def delete_research_environment(request):
         workbench_resource_id=data["instance_id"],
     )
     return HttpResponse(status=202)
+
+
+@require_POST
+@login_required
+@cloud_identity_required
+def leave_shared_environment(request):
+    data = json.loads(request.body)
+    services.remove_workbench_collaborator(
+        workspace_project_id=data["gcp_project_id"],
+        service_account_name=data["service_account_name"],
+        collaborator_email=request.user.cloud_identity.email,
+    )
+    return HttpResponse(status=200)
 
 
 @require_PATCH
@@ -580,3 +606,90 @@ def identity_provisioning(request):
         )
 
     return HttpResponse(status=201)
+
+
+@require_GET
+@login_required
+def api_static_pages(request):
+    pages = StaticPage.objects.all().order_by('nav_order')
+    return JsonResponse({"static_pages": serializers.serialize_static_pages(pages)})
+
+@require_GET
+@login_required
+def api_front_page_buttons(request):
+    buttons = FrontPageButton.objects.all()
+    return JsonResponse({"front_page_buttons": serializers.serialize_front_page_buttons(buttons)})
+
+
+@login_required
+@cloud_identity_required
+def manage_collaborative_environment_api(request, workspace_project_id, environment_name, service_account_name):
+    user = User.objects.get(id=request.GET.get("user_id") if request.method == "GET" else json.loads(request.body).get("user_id"))
+    workbench_owner_username = request.GET.get("workbench_owner_username") if request.method == "GET" else json.loads(request.body).get("workbench_owner_username")
+
+    if not services.is_environment_owner(user, workbench_owner_username):
+        return JsonResponse({"error": f"Failed to access {environment_name} management panel"}, status=403)
+
+    if request.method == "POST":
+        data = json.loads(request.body)
+        action = data.get("action")
+
+        if action == "add_collaborator":
+            collaborator_email = data.get("collaborator_email")
+            if collaborator_email:
+                services.add_workbench_collaborator(
+                    workspace_project_id=workspace_project_id,
+                    service_account_name=service_account_name,
+                    collaborator_email=collaborator_email,
+                )
+                return HttpResponse(status=200)
+            else:
+                return HttpResponse("Missing collaborator email", status=400)
+
+        elif action == "remove_collaborator":
+            collaborator_email = data.get("collaborator_email")
+            if collaborator_email:
+                services.remove_workbench_collaborator(
+                    workspace_project_id=workspace_project_id,
+                    service_account_name=service_account_name,
+                    collaborator_email=collaborator_email,
+                )
+                return HttpResponse(status=200)
+            else:
+                return HttpResponse("Missing collaborator email", status=400)
+
+        elif action == "mark_notification_viewed":
+            notification_id = data.get("notification_id")
+            if notification_id:
+                success = services.mark_notification_as_viewed(notification_id)
+                return JsonResponse({"success": success})
+            else:
+                return HttpResponse("Missing notification ID", status=400)
+
+        elif action == "clear_all_notifications":
+            success = services.clear_all_notifications(
+                workspace_project_id=workspace_project_id,
+                service_account_name=service_account_name,
+            )
+            return JsonResponse({"success": success})
+
+        else:
+            return HttpResponse("Invalid action", status=400)
+
+    collaborators = services.get_workbench_collaborators(
+        workspace_project_id=workspace_project_id,
+        service_account_name=service_account_name,
+    )
+
+    notifications = services.get_workbench_notifications(
+        workspace_project_id=workspace_project_id,
+        service_account_name=service_account_name,
+    )
+
+    return JsonResponse({
+        "workspace_project_id": workspace_project_id,
+        "environment_name": environment_name,
+        "collaborators": collaborators,
+        "notifications": serializers.serialize_notifications(notifications),
+        "workbench_owner_username": workbench_owner_username,
+    })
