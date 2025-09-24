@@ -68,6 +68,7 @@ def serialize_workbench(workbench):
         "gpu_accelerator_type": workbench.gpu_accelerator_type,
         "workbench_owner_username": workbench.workbench_owner_username,
         "service_account_name": workbench.service_account_name,
+        "project_id": workbench.project.id,
         "is_running": workbench.is_running,
     }
 
@@ -199,29 +200,24 @@ def serialize_quotas(objects: Iterable[QuotaInfo]) -> list[Dict]:
     ]
 
 
-def serialize_static_pages(pages: StaticPage) -> list[Dict]:
-    return [
-        {
-            "id": page.id,
-            "title": page.title,
-            "url": page.url,
-            "nav_bar": page.nav_bar,
-            "nav_order": page.nav_order,
-        }
-        for page in pages
-    ]
+def serialize_static_page(page):
+    return {
+        "id": page.id,
+        "title": page.title,
+        "url": page.url,
+        "nav_bar": page.nav_bar,
+        "nav_order": page.nav_order,
+    }
 
-def serialize_front_page_buttons(buttons: FrontPageButton) -> list[Dict]:
-    return [
-        {
-            "id": button.id,
-            "label": button.label,
-            "url": button.url,
-            "description": button.description,
-            "associated_image_path": button.associated_image_path,
-        }
-        for button in buttons
-    ]
+
+def serialize_front_page_button(button):
+    return {
+        "id": button.id,
+        "label": button.label,
+        "url": button.url,
+        "description": button.description,
+        "associated_image_path": button.associated_image_path,
+    }
 
 
 def serialize_instance_projected_costs(

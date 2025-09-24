@@ -160,3 +160,7 @@ class GetSimplifiedWorkspaceFailed(Exception):
 
 class GetSharedBucketFailed(Exception):
     pass
+
+
+class PublishedProjectAccessFailed(Exception):
+    pass

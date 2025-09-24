@@ -37,7 +37,7 @@ from physionet.models import StaticPage, FrontPageButton
 
 User = get_user_model()
 PublishedProject = apps.get_model("project", "PublishedProject")
-
+CloudIdentity = apps.get_model("environment", "CloudIdentity")
 
 ProjectedWorkbenchCost = namedtuple("ProjectedWorkbenchCost", "resource cost")
 
@@ -611,24 +611,40 @@ def identity_provisioning(request):
 @require_GET
 @login_required
 def api_static_pages(request):
-    pages = StaticPage.objects.all().order_by('nav_order')
-    return JsonResponse({"static_pages": serializers.serialize_static_pages(pages)})
+    pages = StaticPage.objects.all().order_by("nav_order")
+    data = [serializers.serialize_static_page(page) for page in pages]
+    return JsonResponse({"static_pages": data})
+
 
 @require_GET
 @login_required
 def api_front_page_buttons(request):
     buttons = FrontPageButton.objects.all()
-    return JsonResponse({"front_page_buttons": serializers.serialize_front_page_buttons(buttons)})
+    data = [serializers.serialize_front_page_button(btn) for btn in buttons]
+    return JsonResponse({"front_page_buttons": data})
 
 
 @login_required
 @cloud_identity_required
-def manage_collaborative_environment_api(request, workspace_project_id, environment_name, service_account_name):
-    user = User.objects.get(id=request.GET.get("user_id") if request.method == "GET" else json.loads(request.body).get("user_id"))
-    workbench_owner_username = request.GET.get("workbench_owner_username") if request.method == "GET" else json.loads(request.body).get("workbench_owner_username")
+def manage_collaborative_environment_api(
+    request, workspace_project_id, environment_name, service_account_name
+):
+    user = User.objects.get(
+        id=request.GET.get("user_id")
+        if request.method == "GET"
+        else json.loads(request.body).get("user_id")
+    )
+    workbench_owner_username = (
+        request.GET.get("workbench_owner_username")
+        if request.method == "GET"
+        else json.loads(request.body).get("workbench_owner_username")
+    )
 
     if not services.is_environment_owner(user, workbench_owner_username):
-        return JsonResponse({"error": f"Failed to access {environment_name} management panel"}, status=403)
+        return JsonResponse(
+            {"error": f"Failed to access {environment_name} management panel"},
+            status=403,
+        )
 
     if request.method == "POST":
         data = json.loads(request.body)
@@ -686,10 +702,35 @@ def manage_collaborative_environment_api(request, workspace_project_id, environm
         service_account_name=service_account_name,
     )
 
-    return JsonResponse({
-        "workspace_project_id": workspace_project_id,
-        "environment_name": environment_name,
-        "collaborators": collaborators,
-        "notifications": serializers.serialize_notifications(notifications),
-        "workbench_owner_username": workbench_owner_username,
-    })
+    return JsonResponse(
+        {
+            "workspace_project_id": workspace_project_id,
+            "environment_name": environment_name,
+            "collaborators": collaborators,
+            "notifications": serializers.serialize_notifications(notifications),
+            "workbench_owner_username": workbench_owner_username,
+        }
+    )
+
+
+@require_GET
+@login_required
+def search_users_by_cloud_email(request):
+    collaborator_email = request.GET.get("email", "")
+    project_id = request.GET.get("project_id")
+    collaborator_email = collaborator_email.strip().lower()
+    if not collaborator_email:
+        return JsonResponse({"results": []})
+
+    emails = CloudIdentity.objects.filter(
+        email__icontains=collaborator_email
+    ).values_list("email", flat=True)[:5]
+    results = []
+    for email in emails:
+        try:
+            if services.check_collaborator_project_access(email, project_id):
+                results.append(email)
+        except Exception:
+            continue
+
+    return JsonResponse({"results": results})
