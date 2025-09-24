@@ -1,0 +1,125 @@
+<div class="card" id="environment-tabs">
+  <div class="card-header">
+    <ul class="nav nav-tabs card-header-tabs">
+      <li class="nav-item">
+        <a
+          class="nav-link active"
+          id="environments-tab"
+          data-toggle="tab"
+          href="#environments"
+          role="tab"
+          aria-controls="environments"
+          aria-selected="true"
+        >
+          Running Environments
+        </a>
+      </li>
+       <li class="nav-item">
+        <a
+          class="nav-link"
+          id="bucket-sharing-tab"
+          data-toggle="tab"
+          href="#bucket_sharing"
+          role="tab"
+          aria-controls="bucket_sharing"
+          aria-selected="false"
+        >
+          Sharing
+        </a>
+      </li>
+      <li class="nav-item">
+        <a
+          class="nav-link"
+          id="billing-accounts-tab"
+          data-toggle="tab"
+          href="#billing_accounts"
+          role="tab"
+          aria-controls="billing_accounts"
+          aria-selected="false"
+        >
+          Billing
+        </a>
+      </li>
+    </ul>
+  </div>
+  <div class="card-body">
+    <div class="tab-content">
+      <div
+        class="tab-pane fade show active"
+        id="environments"
+        role="tabpanel"
+        aria-labelledby="environments-tab"
+      >
+        {% include "environment/_available_environments_list.html" %}
+      </div>
+       <div
+        class="tab-pane fade"
+        id="bucket_sharing"
+        role="tabpanel"
+        aria-labelledby="bucket-sharing-tab"
+      >
+        {% include "environment/_shared_buckets_list.html" %}
+      </div>
+      <div
+        class="tab-pane fade"
+        id="billing_accounts"
+        role="tabpanel"
+        aria-labelledby="billing-accounts-tab"
+      >
+        {% include "environment/_billing_accounts_list.html" %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    $(document).on('show.bs.modal', '.modal', function () {
+      isModalOpen = true;
+    });
+
+    $(document).on('hidden.bs.modal', '.modal', function () {
+      if (cardToRefresh !== "") {
+        pollExecutionStatus(cardToRefresh);
+      }
+
+      cardToRefresh = "";
+      isModalOpen = false;
+    });
+
+    function joinSocket(room) {
+      socket.emit("join", room);
+    };
+
+    // remove existing listeners
+    window.socket.off("workflow_update");
+    window.socket.on('workflow_update', function(data) {
+        if (isModalOpen) {
+           cardToRefresh = data.workbench_activity_id;
+           return;
+        }
+
+        pollExecutionStatus(data.workbench_activity_id);
+    });
+
+    window.socket.on("disconnect", (reason) => {
+      if (reason === "transport close") {
+        // the disconnection was initiated by the server, you need to reconnect manually
+        socket.connect();
+        {% for workflow in workflows %}
+          joinSocket("{{ workflow.execution_resource_name }}");
+        {% endfor %}
+      }
+    });
+
+    function disconnectSocket() {
+      window.socket.disconnect();
+    };
+
+    window.onbeforeunload = function() {
+      disconnectSocket()
+    };
+
+    {% for workflow in workflows %}
+      joinSocket("{{ workflow.execution_resource_name }}");
+    {% endfor %}
+</script>

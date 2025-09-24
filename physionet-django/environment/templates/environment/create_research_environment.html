@@ -1,0 +1,154 @@
+{% extends 'base.html' %}
+
+{% load static %}
+
+{% load project_templatetags %}
+
+{% block title %}Create Research Environment{% endblock %}
+
+{% block local_js_top %}
+<script src="{% static 'environment/js/pricing_change.js' %}"></script>
+<script src="{% static 'environment/js/forms.js' %}"></script>
+<script src="{% static 'environment/js/add_user_panel.js' %}"></script>
+{% endblock %}
+
+{% block local_css %}
+<link rel="stylesheet" type="text/css" href="{% static 'environment/css/environment-base.css' %}">
+<link rel="stylesheet" type="text/css" href="{% static 'environment/css/creation_form.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container">
+  {% include "message_snippet.html" %}
+    <h1 class="mb-4">
+      Create Research Environment
+    </h1>
+    <div class="container-body">
+      <div class="card" style="width: 36rem;">
+        <div class="card-body">
+          <form class="single-submit-form" action="{% url 'create_research_environment' selected_workspace.gcp_project_id %}" method="post" style="width: 24rem;">
+            {% csrf_token %}
+            {{ form }}
+            <input type="hidden" id="users-list" name="users_list" value="">
+            <button class="btn btn-primary mt-3" type="submit">
+              Create environment
+            </button>
+          </form>
+        </div>
+      </div>
+      <div class="card billing-information">
+        <div class="container mt-4 collaborative-panel hidden">
+          <h5 class="mb-3">Add Collaborators</h5>
+          <form id="add-user-form" class="mb-3">
+            <div class="form-group">
+              <label for="user-email">Add User Email</label>
+              <input type="email" id="user-email" class="form-control" placeholder="Enter user email" required>
+              <small class="form-text text-muted">Email must end with @healthdatanexus.ai</small>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm mt-2">Add User</button>
+          </form>
+          <h6>Added Users</h6>
+          <ul id="user-list" class="list-group">
+            <li class="list-group-item text-muted">No users added yet.</li>
+          </ul>
+        </div>
+        <div class="card-body">
+          <h3 class="card-title">
+            Projected Costs
+          </h3>
+            <div id="billing_data">
+              <p>
+                 The currently selected configuration will cost approximately:
+              </p>
+              <div>
+                <h5 class="card-title">
+                  Instance Costs
+                </h5>
+                {% for region_name, region_instances in instance_projected_costs.items %}
+                  {% for resource, cost in region_instances %}
+                    <div class="container-body instance-costs hidden" id="{{ region_name.value }}-{{ resource }}" data-cost="{{ cost }}">
+                      Instance: {{ cost }} $/hour
+                    </div>
+                  {% endfor %}
+                {% endfor %}
+              </div>
+              <div id="gpu_accelerator_costs" class="hidden">
+                {% for region_name, region_instances in gpu_projected_costs.items %}
+                  {% for gpu_accelerator, cost in region_instances %}
+                    <div class="container-body gpu-accelerator-costs hidden" id="{{ region_name.value }}-{{ gpu_accelerator }}" data-cost="{{ cost }}">
+                      GPU: {{ cost }} $/hour
+                    </div>
+                  {% endfor %}
+                {% endfor %}
+              </div>
+              <p id="instance_total_cost">
+                <b>Total: <span>0</span> $/hour</b>
+              </p>
+              <div>
+                <h5 class="card-title">
+                  Data Costs
+                </h5>
+                {% for region_name, additional_feature in data_storage_projected_costs.items %}
+                  <div class="container-body data-storage-costs hidden" id="{{ region_name.value }}-{{ additional_feature.resource }}" data-cost="{{ additional_feature.cost }}">
+                    {{ additional_feature.resource }}: {{ additional_feature.cost }} $/month
+                  </div>
+                {% endfor %}
+                <p id="data_total_cost">
+                    <b>Total: <span>0</span> $/month</b>
+                </p>
+              </div>
+              <p>
+                For further information check:
+                <a href="https://cloud.google.com/compute/all-pricing ">Google Pricing List</a>
+              </p>
+            </div>
+        </div>
+      </div>
+    </div>
+</div>
+
+<script>
+  function fetchGpuAccelerators() {
+    var machine_type_id = $("#id_machine_type").val();
+    if (machine_type_id) {
+      $.ajax({
+        url: "{% url 'get_available_gpu_accelerators_partial' %}",
+        data: {
+          'vm_instance': machine_type_id
+        },
+        success: function (data) {
+          $("#id_gpu_accelerator").html(data);
+        }
+      });
+    }
+  }
+
+  $(document).ready(function () {
+    fetchGpuAccelerators();
+
+    $("#id_machine_type").change(function () {
+      fetchGpuAccelerators();
+    });
+
+    const environmentTypeRadios = document.querySelectorAll(".environment-type input");
+    const collaborativePanel = document.querySelector(".collaborative-panel");
+
+    function toggleCollaborativePanel() {
+      const selectedType = document.querySelector(".environment-type input:checked");
+      if (selectedType && selectedType.value === "collaborative") {
+        collaborativePanel.classList.remove("hidden");
+      } else {
+        collaborativePanel.classList.add("hidden");
+      }
+    }
+
+    environmentTypeRadios.forEach((radio) => {
+      radio.addEventListener("change", toggleCollaborativePanel);
+    });
+
+    toggleCollaborativePanel();
+  });
+</script>
+
+{% endblock %}
+

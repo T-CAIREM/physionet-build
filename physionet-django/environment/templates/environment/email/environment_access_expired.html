@@ -1,0 +1,14 @@
+{% load i18n %}{% autoescape off %}{% filter wordwrap:70 %}
+
+Your access to a dataset for which you have running research environments has expired.
+
+Affected environments:
+{% for project in projects %}
+    - {{ project }}
+{% endfor %}
+
+The environments will get automatically destroyed in 2 weeks.
+
+{{ signature }}
+
+{% endfilter %}{% endautoescape %}

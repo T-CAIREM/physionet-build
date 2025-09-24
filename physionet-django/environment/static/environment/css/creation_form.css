@@ -1,0 +1,35 @@
+form > label {
+    font-weight: bold;
+    margin-top: 1rem;
+    color: var(--secondary-color);
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.environment-type {
+    width: 24px;
+    display: inline;
+    list-style-type: none;
+}
+
+.container-body {
+    display: flex;
+    gap: 1rem;
+}
+
+.billing-information {
+    width: 35%;
+    min-width: 15rem;
+    background-color: var(--light-color);
+    border-radius: 0.3rem;
+    padding: 1.25rem;
+}
+
+.hidden {
+    display: none;
+}
+
+#id_gpu_accelerated {
+    width: auto;
+}
