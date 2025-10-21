@@ -44,6 +44,9 @@ class GCP(models.Model):
     def __str__(self):
         return self.bucket_name
 
+    def cloud_uri(self):
+        return f'gs://{self.bucket_name}/'
+
 
 class AWS(models.Model):
     """
@@ -62,11 +65,31 @@ class AWS(models.Model):
     class Meta:
         default_permissions = ()
 
+    def cloud_uri(self):
+        return self.public_s3_uri()
+
     def public_s3_uri(self):
         """
         Construct the S3 URI for public projects.
         """
         return f's3://{self.bucket_name}/{self.project.slug}/{self.project.version}/'
+
+    def user_in_access_point_policy(self, user):
+        """
+        Check if a user has access to this AWS project through any access point.
+
+        Args:
+            user (User): The user to check
+
+        Returns:
+            bool: True if user has access, False otherwise
+        """
+        if not user.is_authenticated:
+            return False
+        return AWSAccessPointUser.objects.filter(
+            user=user,
+            aws=self
+        ).exists()
 
     def __str__(self):
         return f"AWS instance for project: {self.project.slug}"

@@ -1,20 +1,25 @@
+import hashlib
+import json
+from math import ceil
+import os
+import re
+import typing
+
 import boto3
 import botocore
-import re
-import os
-import json
+from botocore.exceptions import ClientError
 from django.conf import settings
+from django.db.models import Q
+
+from project.authorization.access import can_view_project_files
 from project.models import PublishedProject, AWS, AccessPolicy, AWSAccessPoint, AWSAccessPointUser
 from user.models import (
     User,
     CloudInformation
 )
-from project.authorization.access import can_view_project_files
-from botocore.exceptions import ClientError
-from math import ceil
-from django.db.models import Q
 
 MAX_PRINCIPALS_PER_AP_POLICY = 500
+MAX_RETRIES = 500
 
 # Manage AWS buckets and objects
 def has_S3_open_data_bucket_name():
@@ -43,6 +48,19 @@ def has_S3_controlled_data_bucket_name():
     return bool(settings.S3_CONTROLLED_ACCESS_BUCKET)
 
 
+def has_S3_geo_restricted_data_bucket_name():
+    """
+    Check if the S3_OPEN_ACCESS_BUCKET_WITH_LOGIN setting has a value set in the project's settings.
+
+    This method verifies whether a geo-restricted data bucket name has been specified for S3 storage.
+
+    Returns:
+        bool: Returns True if the S3_OPEN_ACCESS_BUCKET_WITH_LOGIN setting is set
+        (i.e., truthy), False otherwise.
+    """
+    return bool(settings.S3_OPEN_ACCESS_BUCKET_WITH_LOGIN)
+
+
 def has_s3_credentials():
     """
     Check if AWS credentials have been set in
@@ -58,6 +76,7 @@ def has_s3_credentials():
             settings.S3_OPEN_ACCESS_BUCKET,
             settings.S3_SERVER_ACCESS_LOG_BUCKET,
             settings.S3_CONTROLLED_ACCESS_BUCKET,
+            settings.S3_OPEN_ACCESS_BUCKET_WITH_LOGIN,
         ]
     )
 
@@ -142,6 +161,162 @@ def create_s3_control_client():
     raise botocore.exceptions.NoCredentialsError("S3 credentials are undefined.")
 
 
+class S3ObjectInfo(typing.NamedTuple):
+    """
+    Metadata about an object (file) stored in an S3 bucket.
+
+    Attributes:
+        size (int): Size of file in bytes.
+        etag (str): HTTP entity tag.
+    """
+    size: int
+    etag: str
+
+    def match_path(self, path):
+        """
+        Check whether the contents of the object match a local file.
+
+        Note that because S3 uses the MD5 algorithm, it is possible
+        for someone to deliberately construct two different files that
+        have the same ETag, and this function will incorrectly return
+        True.
+
+        Also note that the hash is dependent on the parameters
+        (multipart_threshold, multipart_chunksize) used when the file
+        was uploaded to S3, so it is also possible that this function
+        will return False when in fact the two files are identical.
+
+        Args:
+            path (str): Filesystem path of the local file.
+
+        Returns:
+            bool: True if the local file and remote file contents are
+            identical (barring MD5 collisions.)
+        """
+        if self.size != os.path.getsize(path):
+            return False
+        with open(path, 'rb') as fileobj:
+            return self.etag == s3_file_etag(fileobj)
+
+
+def s3_file_etag(fileobj, chunksize=(8 * 1024 * 1024)):
+    """
+    Calculate the ETag that S3 would use for a file.
+
+    The ETag used by S3 is dependent on whether the file was uploaded
+    as a single part or as multiple parts, and if multiple parts are
+    used, depends on the chunk size.  The default behavior of boto3 is
+    to use a chunk size of 8 MiB.
+
+    Args:
+        fileobj (io.BufferedIOBase): Readable binary file object.
+        chunksize (int): Chunk size for multi-part uploads.
+
+    Returns:
+        str: Expected value of the ETag, if the given file were
+        uploaded to S3.
+    """
+    # https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html#large-object-checksums
+    meta_hash = hashlib.md5()
+    part_hash = hashlib.md5()
+    remaining = chunksize
+    n_parts = 0
+    while True:
+        data = fileobj.read(min(remaining, 1024 * 1024))
+        if not data:
+            break
+        part_hash.update(data)
+        remaining -= len(data)
+        if remaining == 0:
+            meta_hash.update(part_hash.digest())
+            part_hash = hashlib.md5()
+            remaining = chunksize
+            n_parts += 1
+    if n_parts > 0 and remaining < chunksize:
+        meta_hash.update(part_hash.digest())
+        n_parts += 1
+
+    # Quotation marks are part of the ETag value.
+    if n_parts == 0:
+        return '"{}"'.format(part_hash.hexdigest())
+    else:
+        return '"{}-{}"'.format(meta_hash.hexdigest(), n_parts)
+
+
+def get_s3_object_info(s3, bucket_name, key):
+    """
+    Retrieve metadata of an object (file) stored in an S3 bucket.
+
+    Args:
+        s3 (boto3.client.S3): An initialized AWS S3 client object.
+        bucket_name (str): Name of the bucket.
+        key (str): Key of the object in the bucket.
+
+    Returns:
+        S3ObjectInfo: Metadata of the object.
+
+    Raises:
+        botocore.exceptions.ClientError: If the object does not exist
+        or the client does not have permission to access it.
+
+    Example:
+        >>> get_s3_object_info(s3, "physionet-open", "mitdb/1.0.0/100.dat")
+        S3ObjectInfo(size=1950000, etag='"4968ff1f99b15820d4a7a1d274d13d66"')
+    """
+    response = s3.head_object(Bucket=bucket_name, Key=key)
+    return S3ObjectInfo(
+        size=response['ContentLength'],
+        etag=response['ETag'],
+    )
+
+
+def list_s3_subdir_object_info(s3, bucket_name, prefix):
+    """
+    Retrieve metadata of all files in a subdirectory of an S3 bucket.
+
+    Args:
+        s3 (boto3.client.S3): An initialized AWS S3 client object.
+        bucket_name (str): Name of the bucket.
+        prefix (str): Prefix of the directory within the bucket.
+
+    Returns:
+        files (dict): A dictionary mapping file paths (keys) to
+        S3ObjectInfo.
+        subdirs (list): A list of prefixes representing subdirectories
+        of the given directory.
+
+    Raises:
+        botocore.exceptions.ClientError: If the bucket does not exist
+        or the client does not have permission to access it.
+
+    Example:
+        >>> f, d = get_s3_object_info(s3, "physionet-open", "mitdb/1.0.0/")
+        >>> f['mitdb/1.0.0/100.atr']
+        S3ObjectInfo(size=4558, etag='"566dc5a685c634deba5a081b4ceec345"')
+        >>> f['mitdb/1.0.0/100.dat']
+        S3ObjectInfo(size=1950000, etag='"4968ff1f99b15820d4a7a1d274d13d66"')
+        >>> d
+        ['mitdb/1.0.0/mitdbdir/', 'mitdb/1.0.0/x_mitdb/']
+    """
+    pages = s3.get_paginator('list_objects_v2').paginate(
+        Bucket=bucket_name,
+        Prefix=prefix,
+        Delimiter='/',
+    )
+
+    files = {}
+    subdirs = []
+    for page in pages:
+        for file_data in page.get('Contents', []):
+            files[file_data['Key']] = S3ObjectInfo(
+                size=file_data['Size'],
+                etag=file_data['ETag'],
+            )
+        subdirs += page.get('CommonPrefixes', [])
+
+    return files, subdirs
+
+
 def get_bucket_name(project):
     """
     Determine and return the S3 bucket name associated with
@@ -171,7 +346,11 @@ def get_bucket_name(project):
     """
     bucket_name = None
 
-    if project.access_policy == AccessPolicy.OPEN and has_S3_open_data_bucket_name():
+    if (project.georestricted
+            and project.access_policy == AccessPolicy.OPEN
+            and has_S3_geo_restricted_data_bucket_name()):
+        bucket_name = settings.S3_OPEN_ACCESS_BUCKET_WITH_LOGIN
+    elif project.access_policy == AccessPolicy.OPEN and has_S3_open_data_bucket_name():
         bucket_name = settings.S3_OPEN_ACCESS_BUCKET
     elif (
         project.access_policy != AccessPolicy.OPEN
@@ -407,16 +586,30 @@ def send_files_to_s3(folder_path, s3_prefix, bucket_name, project):
         raise ValueError("AWS_PROFILE is undefined. Please set it in your settings.")
 
     s3 = create_s3_client()
-    for root, _, files in os.walk(folder_path):
+    for root, subdirs, files in os.walk(folder_path):
+        subdirs.sort()
+        files.sort()
+
+        if root == folder_path:
+            dir_prefix = s3_prefix
+        else:
+            dir_prefix = os.path.join(
+                s3_prefix, os.path.relpath(root, folder_path), ''
+            )
+        existing_files, existing_subdirs = list_s3_subdir_object_info(
+            s3, bucket_name, dir_prefix
+        )
+
         for file_name in files:
             local_file_path = os.path.join(root, file_name)
             s3_key = os.path.join(
                 s3_prefix, os.path.relpath(local_file_path, folder_path)
             )
-            s3.upload_file(
-                Filename=local_file_path,
-                Bucket=bucket_name,
-                Key=s3_key,
+
+            # Upload file if not already up-to-date
+            send_file_to_s3(
+                s3, bucket_name, s3_key, local_file_path,
+                existing_files.get(s3_key)
             )
 
     # If project has a ZIP file, upload it as well
@@ -428,11 +621,39 @@ def send_files_to_s3(folder_path, s3_prefix, bucket_name, project):
         else:
             s3_key = os.path.join(f"{project.slug}/", zip_name)
 
-        s3.upload_file(
-            Filename=zip_file_path,
-            Bucket=bucket_name,
-            Key=s3_key,
-        )
+        # Upload file if not already up-to-date
+        try:
+            existing_file = get_s3_object_info(s3, bucket_name, s3_key)
+        except s3.exceptions.ClientError:
+            existing_file = None
+        send_file_to_s3(s3, bucket_name, s3_key, zip_file_path, existing_file)
+
+
+def send_file_to_s3(s3, bucket_name, key, file_path, existing_file=None):
+    """
+    Upload a local file to an AWS S3 bucket.
+
+    If the remote file already exists and matches the contents of the
+    local file, the remote file is not modified.
+
+    Args:
+        s3 (boto3.client.S3): An initialized AWS S3 client object.
+        bucket_name (str): Destination bucket name.
+        key (str): Destination key within the bucket.
+        file_path (str): Filesystem path of the local file.
+        existing_file (S3ObjectInfo or None): Metadata of the existing
+        object, if any.
+
+    Returns:
+        None
+    """
+    if existing_file is not None and existing_file.match_path(file_path):
+        return
+    s3.upload_file(
+        Filename=file_path,
+        Bucket=bucket_name,
+        Key=key,
+    )
 
 
 def get_aws_accounts_for_access_point(access_point_name):
@@ -477,7 +698,7 @@ def get_aws_accounts_for_access_point(access_point_name):
             if user.cloud_information.aws_userid
             else None
         )
-        if re.search(aws_id_pattern, aws_id):
+        if aws_id and re.search(aws_id_pattern, aws_id):
             aws_accounts.append({'aws_id': aws_id, 'aws_userid': aws_userid})
 
     return aws_accounts
@@ -521,7 +742,7 @@ def get_aws_accounts_for_dataset(dataset_name):
                         aws_userid = user.cloud_information.aws_userid
                     else:
                         aws_userid = None
-                    if re.search(aws_id_pattern, aws_id):
+                    if aws_id and re.search(aws_id_pattern, aws_id):
                         aws_accounts.append({'aws_id': aws_id, 'aws_userid': aws_userid})
             break  # Stop iterating once the dataset is found
 
@@ -870,12 +1091,49 @@ def create_data_access_point_policy(
     return policy_str
 
 
+def extract_invalid_userid(client_error):
+    """
+    Extract the invalid AWS user ID from the ClientError detail.
+
+    Args:
+        client_error (ClientError): The boto3 ClientError exception
+
+    Returns:
+        str or None: The invalid user ID if found, None otherwise
+    """
+    try:
+        detail = client_error.response['Error']['Detail']
+        import re
+        match = re.search(r'"AWS"\s*:\s*"([^"]+)"', detail)
+        if match:
+            return match.group(1)
+    except (KeyError, AttributeError):
+        pass
+    return None
+
+
+def mark_user_unverified(invalid_userid):
+    """
+    Mark a user as unverified based on their AWS user ID.
+
+    Args:
+        invalid_userid (str): The AWS user ID that's invalid
+
+    Returns:
+        bool: True if user was found and marked as unverified, False otherwise
+    """
+    try:
+        cloud_info = CloudInformation.objects.get(aws_userid=invalid_userid)
+        cloud_info.aws_verification_datetime = None
+        cloud_info.save()
+        return True
+    except CloudInformation.DoesNotExist:
+        return False
+
+
 def set_data_access_point_policy(data_access_point_name, data_access_point_policy):
     """
     Apply a custom policy to an AWS S3 data access point.
-
-    This function sets a custom access policy for the specified
-    S3 data access point.
 
     Args:
         data_access_point_name (str): The name of the data access point.
@@ -883,19 +1141,18 @@ def set_data_access_point_policy(data_access_point_name, data_access_point_polic
 
     Returns:
         bool: True if the policy was successfully applied, False otherwise.
-
-    Note:
-    - Ensure that AWS credentials (Access Key and Secret Key)
-    are properly configured for the S3 client used in this function.
     """
     s3_control = create_s3_control_client()
 
-    s3_control.put_access_point_policy(
-        AccountId=settings.AWS_ACCOUNT_ID,
-        Name=data_access_point_name,
-        Policy=data_access_point_policy,
-    )
-    return True
+    try:
+        s3_control.put_access_point_policy(
+            AccountId=settings.AWS_ACCOUNT_ID,
+            Name=data_access_point_name,
+            Policy=data_access_point_policy,
+        )
+        return True
+    except ClientError:
+        raise
 
 
 def add_user_to_access_point_policy(project, user):
@@ -1005,15 +1262,51 @@ def get_access_point_with_capacity(project):
 
 
 def insert_access_point_policy(access_point, data_access_point_name, project, subset_aws_ids):
-    # Set policies and associate users for the newly created access point
-    access_point_policy = create_data_access_point_policy(
-        data_access_point_name, project.slug, project.version, subset_aws_ids
-    )
-    valid_ap_policy = set_data_access_point_policy(
-        data_access_point_name, access_point_policy
-    )
-    if valid_ap_policy:
-        associate_aws_users_with_data_access_point(access_point, subset_aws_ids)
+    """
+    Set policies and associate users for an access point.
+    Handles invalid users by retrying with them removed from the list.
+    """
+    # Work with a copy to avoid modifying the original list
+    working_aws_ids = subset_aws_ids.copy()
+    for attempt in range(MAX_RETRIES):
+        if not working_aws_ids:
+            # No valid users left
+            return True
+
+        access_point_policy = create_data_access_point_policy(
+            data_access_point_name, project.slug, project.version, working_aws_ids
+        )
+        try:
+            valid_ap_policy = set_data_access_point_policy(
+                data_access_point_name, access_point_policy
+            )
+            if valid_ap_policy:
+                associate_aws_users_with_data_access_point(access_point, working_aws_ids)
+                return True
+            else:
+                return False
+
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'MalformedPolicy':
+                invalid_userid = extract_invalid_userid(e)
+                if invalid_userid:
+                    # Mark user as unverified
+                    mark_user_unverified(invalid_userid)
+
+                    # Remove the invalid user
+                    working_aws_ids = [
+                        user for user in working_aws_ids
+                        if user['aws_userid'] != invalid_userid
+                    ]
+                    # Continue to next attempt with reduced user list
+                    continue
+                else:
+                    return False
+            else:
+                raise
+
+    # Exceeded max retries
+    return False
 
 
 def initialize_access_points(project):
@@ -1162,7 +1455,7 @@ def upload_project_to_S3(project):
 
     # Set the bucket policy only if the bucket was newly created
     # and has controlled access
-    if bucket_created and project.access_policy != AccessPolicy.OPEN:
+    if bucket_created and project.access_policy != AccessPolicy.OPEN or project.georestricted:
         controlled_policy = create_controlled_bucket_policy(bucket_name)
         s3.put_bucket_policy(Bucket=bucket_name, Policy=controlled_policy)
 
@@ -1172,7 +1465,7 @@ def upload_project_to_S3(project):
     folder_path = project.file_root()
     s3_prefix = f"{project.slug}/{project.version}/"
     send_files_to_s3(folder_path, s3_prefix, bucket_name, project)
-    if project.access_policy == AccessPolicy.OPEN:
+    if project.access_policy == AccessPolicy.OPEN and not project.georestricted:
         update_open_bucket_policy(project, bucket_name)
     else:
         initialize_access_points(project)

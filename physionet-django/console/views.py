@@ -7,6 +7,7 @@ from itertools import chain
 from statistics import StatisticsError, median
 
 import notification.utility as notification
+from notification.utility import archive_notify
 from background_task import background
 from console.tasks import associated_task, get_associated_tasks
 from dal import autocomplete
@@ -62,6 +63,7 @@ from project.authorization.access import can_view_project_files
 from project.utility import readable_size
 from project.validators import MAX_PROJECT_SLUG_LENGTH
 from project.views import get_file_forms, get_project_file_info, process_files_post
+from project.modelcomponents.activeproject import ArchiveReason
 from user.models import (
     AssociatedEmail,
     CredentialApplication,
@@ -376,6 +378,25 @@ def submission_info(request, project_slug):
         else:
             messages.error(request, "You are not authorized to delete this note.")
         return redirect(f'{request.path}?tab=notes')
+    if 'archive_project' in request.POST:
+        if user != project.editor:
+            messages.error(request, 'Only the project editor can archive a project.')
+            return redirect(f'{request.path}?tab=archive')
+
+        if project.submission_status != SubmissionStatus.NEEDS_RESUBMISSION:
+            messages.error(request, 'Only projects awaiting author revisions can be archived.')
+            return redirect(f'{request.path}?tab=archive')
+
+        archive_reason_text = request.POST.get('archive_reason', '').strip()
+        send_email = request.POST.get('send_email', False)
+
+        project.archive(archive_reason=ArchiveReason.ARCHIVED_BY_EDITOR, archive_reason_text=archive_reason_text)
+
+        if send_email:
+            archive_notify(request, project, archive_reason_text)
+
+        messages.success(request, f'Project "{project.title}" has been archived successfully.')
+        return redirect('submitted_projects')
 
     return render(request, 'console/submission_info.html',
                   {**submission_info_card_params(
@@ -655,12 +676,7 @@ def awaiting_authors(request, project_slug, *args, **kwargs):
     internal_note_form = forms.InternalNoteForm()
 
     if request.method == 'POST':
-        if 'reopen_copyedit' in request.POST:
-            project.reopen_copyedit()
-            notification.reopen_copyedit_notify(request, project)
-            return render(request, 'console/reopen_copyedit_complete.html',
-                          {'project': project})
-        elif 'send_reminder' in request.POST:
+        if 'send_reminder' in request.POST:
             notification.copyedit_complete_notify(request, project,
                                                   project.copyedit_logs.last(), reminder=True)
             messages.success(request, 'The reminder email has been sent.')
@@ -685,6 +701,29 @@ def awaiting_authors(request, project_slug, *args, **kwargs):
                    'yesterday': yesterday,
                    'editor_home': True,
                    'reassign_editor_form': reassign_editor_form})
+
+
+@handling_editor
+def reopen_copyedit(request, project_slug, *args, **kwargs):
+    """
+    Re-open a project for another round of copyediting.
+    """
+    project = kwargs['project']
+
+    if project.submission_status not in (
+        SubmissionStatus.NEEDS_APPROVAL,
+        SubmissionStatus.NEEDS_PUBLICATION,
+    ):
+        return redirect('submission_info', project_slug=project_slug)
+
+    if request.method == 'POST':
+        if 'reopen_copyedit' in request.POST:
+            project.reopen_copyedit()
+            notification.reopen_copyedit_notify(request, project)
+            return render(request, 'console/reopen_copyedit_complete.html',
+                          {'project': project})
+
+    return redirect('submission_info', project_slug=project_slug)
 
 
 @handling_editor
@@ -726,6 +765,10 @@ def publish_submission(request, project_slug, *args, **kwargs):
     if request.method == 'POST':
         publish_form = forms.PublishForm(project=project, data=request.POST)
         if project.is_publishable() and publish_form.is_valid():
+
+            project.georestricted = publish_form.cleaned_data['georestricted']
+            project.save()
+
             if project.is_new_version:
                 slug = project.get_previous_slug()
             else:
@@ -1090,6 +1133,10 @@ def manage_published_project(request, project_slug, version):
     ro_tasks = [task for (task, read_only) in tasks if read_only]
     rw_tasks = [task for (task, read_only) in tasks if not read_only]
 
+    task_names = [task.task_name for (task, read_only) in tasks]
+    gcp_upload_pending = (send_files_to_gcp.name in task_names)
+    aws_upload_pending = (send_files_to_aws.name in task_names)
+
     url_prefix = notification.get_url_prefix(request)
     bulk_url_prefix = notification.get_url_prefix(request)
 
@@ -1115,6 +1162,8 @@ def manage_published_project(request, project_slug, version):
             'data_access': data_access,
             'rw_tasks': rw_tasks,
             'ro_tasks': ro_tasks,
+            'gcp_upload_pending': gcp_upload_pending,
+            'aws_upload_pending': aws_upload_pending,
             'anonymous_url': anonymous_url,
             'passphrase': passphrase,
             'url_prefix': url_prefix,
@@ -1134,6 +1183,10 @@ def gcp_bucket_management(request, project, user):
     Create the database object and cloud bucket if they do not exist, and send
     the files to the bucket.
     """
+    if any(get_associated_tasks(project, name=send_files_to_gcp.name)):
+        messages.info(request, 'Project is already scheduled to be uploaded.')
+        return
+
     is_private = True
 
     if project.access_policy == AccessPolicy.OPEN:
@@ -1190,9 +1243,13 @@ def aws_bucket_management(request, project, user):
     - Ensure that AWS credentials and configurations are correctly set
     up for the S3 client.
     """
+    if any(get_associated_tasks(project, name=send_files_to_aws.name)):
+        messages.info(request, 'Project is already scheduled to be uploaded.')
+        return
+
     is_private = True
 
-    if project.access_policy == AccessPolicy.OPEN:
+    if project.access_policy == AccessPolicy.OPEN and not project.georestricted:
         is_private = False
 
     bucket_name = get_bucket_name(project)

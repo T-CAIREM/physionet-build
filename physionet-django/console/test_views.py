@@ -267,7 +267,7 @@ class TestState(TestMixin):
         self.assertFalse(project.copyeditable())
         # Reopen copyedit
         response = self.client.post(reverse(
-            'awaiting_authors', args=(project.slug,)),
+            'reopen_copyedit', args=(project.slug,)),
             data={'reopen_copyedit':''})
         project = ActiveProject.objects.get(id=project.id)
         self.assertTrue(project.copyeditable())
@@ -357,6 +357,40 @@ class TestState(TestMixin):
 
         self.assertTrue(ActiveProject.objects.get(id=project.id).is_publishable())
 
+        # Reopen copyedit
+        self.client.login(username='admin', password='Tester11!')
+        self.client.post(reverse(
+            'reopen_copyedit', args=(project.slug,)
+        ), data={
+            'reopen_copyedit': '',
+        })
+        project.refresh_from_db()
+        self.assertTrue(project.copyeditable())
+        self.assertFalse(project.is_publishable())
+
+        # Complete copyedit again
+        self.client.post(reverse(
+            'copyedit_submission', args=(project.slug,)
+        ), data={
+            'complete_copyedit': '',
+            'made_changes': 1,
+            'changelog_summary': 'blah blah',
+        })
+        project.refresh_from_db()
+        self.assertFalse(project.copyeditable())
+        self.assertFalse(project.is_publishable())
+
+        # Approve again
+        self.client.login(username='rgmark', password='Tester11!')
+        self.client.post(reverse(
+            'project_submission', args=(project.slug,)
+        ), data={
+            'approve_publication': '',
+        })
+        project.refresh_from_db()
+        self.assertTrue(project.is_publishable())
+
+
     def test_publish(self):
         """
         Test publishing project
@@ -385,14 +419,14 @@ class TestState(TestMixin):
             taken_slug = PublishedProject.objects.all().first().slug
             response = self.client.post(reverse(
                 'publish_submission', args=(project.slug,)),
-                data={'slug':taken_slug, 'doi': False, 'make_zip':1})
+                data={'slug': taken_slug, 'doi': False, 'make_zip': 1, 'georestricted': False})
             self.assertTrue(bool(ActiveProject.objects.filter(
                 slug=project_slug)))
 
         # Publish with a valid custom slug
         response = self.client.post(reverse(
             'publish_submission', args=(project.slug,)),
-            data={'slug':custom_slug, 'doi': False, 'make_zip':1})
+            data={'slug': custom_slug, 'doi': False, 'make_zip': 1, 'georestricted': False})
 
         # Run background tasks
         self.assertTrue(bool(tasks.run_next_task()))
