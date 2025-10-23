@@ -104,8 +104,8 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'physionet.middleware.maintenance.SystemMaintenanceMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'oauth2_provider.middleware.OAuth2TokenMiddleware',
@@ -659,7 +659,7 @@ LOGGING = {
         },
         'django.request': {
             'handlers': ['verbose_console', 'mail_admins'],
-            'level': 'ERROR',
+            'level': 'INFO',
             'propagate': False,
         },
         'physionet.error': {

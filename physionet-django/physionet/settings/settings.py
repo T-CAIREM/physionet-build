@@ -32,7 +32,9 @@ if DEBUG:
         DEBUG_TOOLBAR_CONFIG = {'SHOW_TOOLBAR_CALLBACK': 'physionet.settings.settings.show_toolbar'}
         def show_toolbar(request):
             return True
-
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://35.224.88.248:3000']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:3000', 'http://35.224.88.248:3000']
 # When ready, use the following:
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = config('EMAIL_HOST', default='localhost')
