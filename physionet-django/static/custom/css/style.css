@@ -6,13 +6,13 @@
 
   --nav-height: 80px;
 
-  --primary-color: #DA1259;
-  --secondary-color: #212529;
-  --light-color: #F8F9FA;
+  --primary-color: #337ab7;
+  --secondary-color: #1E3765;
+  --light-color: #f8f8f8;
   --gray-color: #5A6268;
 
   /* for dark background */
-  --dark-primary-color: #c05474;
+  --dark-primary-color: #1E3765;
   --dark-light-color: #BCBEBF;
 
   --pink-100: #F7D6E6;
@@ -22,7 +22,7 @@
   --indigo-100: #E0CFFC;
   --indigo-900: #140330;
   --gray-200: #E9ECEF;
-  --rose-100: #FFE3E9;
+  --rose-100: #d8e4f4;
 
   --footer-color: #BCBEBF;
 }
@@ -272,7 +272,7 @@ body .main {
 }
 
 .modern-ui hr {
-  border-color: #0000001F;
+  border-color: var(--gray-color);
 }
 
 .modern-ui .nav {
@@ -284,6 +284,10 @@ body .main {
   width: 100%;
   background-color: white;
   z-index: 10;
+}
+
+.modern-ui .nav > div > a > img {
+ width: 20rem;
 }
 .modern-ui .nav__links {
   display: none;
@@ -339,6 +343,10 @@ body .main {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+.modern-ui .nav-link--expand-left .nav-link__expand {
+  left: unset;
+  right: 0;
 }
 .modern-ui .nav-sublink {
   display: flex;
@@ -479,7 +487,15 @@ body .main {
 }
 
 .modern-ui .banner {
-  background-size: auto 100%;
+  height: 650px !important;
+  background-image: linear-gradient(
+    to right,
+    white 20%,
+    rgba(30,55,101,0.85) 60%,
+    rgba(30,55,101,0.6) 80%
+  ),
+  url("../../images/banner.png") !important;
+  background-size: auto 100% !important;
   background-position: right center;
   background-repeat: no-repeat;
   margin-bottom: -100px;
@@ -630,6 +646,9 @@ body .main {
   body .main-content {
     padding: 40px 50px;
   }
+  .modern-ui .banner {
+    background-attachment: fixed;
+  }
 
   body .main-side {
     width: 30%;
@@ -646,6 +665,9 @@ body .main {
   }
 }
 @media (min-width: 1200px) {
+  .modern-ui .nav__user {
+    display: flex;
+  }
   .modern-ui .nav__hamburger {
     display: none;
   }
