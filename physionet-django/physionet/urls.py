@@ -93,6 +93,11 @@ if settings.ENABLE_SSO:
 if settings.ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
     urlpatterns.append(path('environments/', include('environment.urls')))
 
+if settings.ENABLE_LOCAL_RESEARCH_ENVIRONMENTS:
+    urlpatterns.append(
+        path('workbench/', include('scinet_environment.urls', namespace='scinet_environment'))
+    )
+
 if settings.DEBUG:
     import debug_toolbar
 

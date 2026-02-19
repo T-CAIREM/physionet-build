@@ -36,6 +36,12 @@ def cloud_research_environments_config(request):
     }
 
 
+def local_research_environments_config(request):
+    return {
+        "ENABLE_LOCAL_RESEARCH_ENVIRONMENTS": getattr(settings, 'ENABLE_LOCAL_RESEARCH_ENVIRONMENTS', False),
+    }
+
+
 def homepage_config(request):
     front_page_buttons = FrontPageButton.objects.all()
     return {

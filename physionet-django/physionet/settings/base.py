@@ -152,6 +152,7 @@ TEMPLATES = [
                 'physionet.context_processors.platform_config',
                 'sso.context_processors.sso_enabled',
                 'physionet.context_processors.cloud_research_environments_config',
+                'physionet.context_processors.local_research_environments_config',
                 'physionet.context_processors.homepage_config'
             ],
             'debug': DEBUG,
@@ -715,13 +716,27 @@ if STORAGE_TYPE == StorageTypes.GCP:
     GS_PROJECT_ID = config('GCP_PROJECT_ID')
 
 
-# Cloud research environment integration
-# See: https://pypi.org/project/hdn-research-environment/
+# Cloud (GCP) research environment integration — hdn-research-environment package.
 ENABLE_CLOUD_RESEARCH_ENVIRONMENTS = config('ENABLE_CLOUD_RESEARCH_ENVIRONMENTS', default=False, cast=bool)
 
 if ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
     CLOUD_RESEARCH_ENVIRONMENTS_API_URL = config('CLOUD_RESEARCH_ENVIRONMENTS_API_URL')
     INSTALLED_APPS.append('environment.apps.EnvironmentConfig')
+
+
+# Local (on-prem/HPC) research environment integration — scinet-research-environment package.
+ENABLE_LOCAL_RESEARCH_ENVIRONMENTS = config('ENABLE_LOCAL_RESEARCH_ENVIRONMENTS', default=False, cast=bool)
+
+if ENABLE_LOCAL_RESEARCH_ENVIRONMENTS:
+    INSTALLED_APPS.append('scinet_environment.apps.ScinetEnvironmentConfig')
+    SCINET_SLURM_ACCOUNT = config('SCINET_SLURM_ACCOUNT', default='def-mmamdani')
+    SCINET_PARTITION = config('SCINET_PARTITION', default='compute')
+    SCINET_DEFAULT_WALLTIME = config('SCINET_DEFAULT_WALLTIME', default='08:00:00')
+    SCINET_MAX_WALLTIME = config('SCINET_MAX_WALLTIME', default='72:00:00')
+    SCINET_PROJECT_ROOT = config('SCINET_PROJECT_ROOT', default='/project/def-mmamdani')
+    SCINET_DATASETS_DIR = config('SCINET_DATASETS_DIR', default='/project/def-mmamdani/datasets')
+    SCINET_USERS_DIR = config('SCINET_USERS_DIR', default='/project/def-mmamdani/users')
+    SCINET_SESSIONS_DIR = config('SCINET_SESSIONS_DIR', default='/project/def-mmamdani/sessions')
 
 
 SITE_NAME = config('SITE_NAME')

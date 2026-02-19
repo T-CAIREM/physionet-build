@@ -111,6 +111,17 @@
                     </div>
                   </a>
                 {% endif %}
+                {% if ENABLE_LOCAL_RESEARCH_ENVIRONMENTS %}
+                  <a class="nav-sublink" href="{% url 'scinet_environment:local_research_environments' %}">
+                    <div class="nav-sublink__icon">
+                      <img src="{% static 'images/icons/environments.png' %}" alt="" height="32px" />
+                    </div>
+                    <div class="nav-sublink__text">
+                      <span class="nav-sublink__title">Research Workbenches</span>
+                      <span class="nav-sublink__description">Launch JupyterLab, RStudio, or VS Code on SciNet.</span>
+                    </div>
+                  </a>
+                {% endif %}
 
                 <a class="nav-sublink" href="{% url 'project_home' %}">
                   <div class="nav-sublink__icon">

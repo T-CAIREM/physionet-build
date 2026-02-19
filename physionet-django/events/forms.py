@@ -46,7 +46,6 @@ class AddEventForm(forms.ModelForm):
                 self.initial['gcp_billing_id'] = self.instance.gcp_billing_id
 
             try:
-                # making a local import only if needed to avoid import issues in testing
                 from environment.services import get_billing_accounts_list
                 billing_accounts = get_billing_accounts_list(user)
                 billing_choices = [('', 'No billing account')]
