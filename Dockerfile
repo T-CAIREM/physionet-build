@@ -32,3 +32,6 @@ RUN cd docker/uwsgi-json-logging-plugin \
 
 COPY . .
 RUN chmod +x /code/docker/wait-for-it.sh /code/docker/dev-entrypoint.sh
+
+RUN pip install /code/scinet-research-environment/ \
+    && rm -rf /root/.cache/pip

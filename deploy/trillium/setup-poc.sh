@@ -23,6 +23,7 @@ setup_directories() {
              "${POC_DIR}/data/static/published-projects" \
              "${POC_DIR}/logs" "${POC_DIR}/containers" \
              "${SCRATCH_DIR}/apptainer_cache" "${SCRATCH_DIR}/tmp" 2>/dev/null || true
+    mkdir -p "${SCINET_SESSIONS_DIR}" "${SCINET_USERS_DIR}" "${SCINET_DATASETS_DIR}" 2>/dev/null || true
     echo "Done"
 }
 
@@ -104,6 +105,15 @@ start_worker_bg() {
         --env SITE_NAME="${SITE_NAME}" --env STRAPLINE="${STRAPLINE}" \
         --env EMAIL_SIGNATURE="${EMAIL_SIGNATURE}" --env FOOTER_MANAGED_BY="${FOOTER_MANAGED_BY}" \
         --env FOOTER_SUPPORTED_BY="${FOOTER_SUPPORTED_BY}" \
+        --env ENABLE_LOCAL_RESEARCH_ENVIRONMENTS="${ENABLE_LOCAL_RESEARCH_ENVIRONMENTS}" \
+        --env SCINET_SLURM_ACCOUNT="${SCINET_SLURM_ACCOUNT}" \
+        --env SCINET_PARTITION="${SCINET_PARTITION}" \
+        --env SCINET_DEFAULT_WALLTIME="${SCINET_DEFAULT_WALLTIME}" \
+        --env SCINET_MAX_WALLTIME="${SCINET_MAX_WALLTIME}" \
+        --env SCINET_PROJECT_ROOT="${SCINET_PROJECT_ROOT}" \
+        --env SCINET_DATASETS_DIR="${SCINET_DATASETS_DIR}" \
+        --env SCINET_USERS_DIR="${SCINET_USERS_DIR}" \
+        --env SCINET_SESSIONS_DIR="${SCINET_SESSIONS_DIR}" \
         "${POC_DIR}/containers/health-data-nexus.sif" \
         python physionet-django/manage.py qcluster > "${POC_DIR}/logs/worker.log" 2>&1 &
     echo $! > "${POC_DIR}/worker.pid"
@@ -120,6 +130,9 @@ start_app_bg() {
     nohup apptainer exec --writable-tmpfs --pwd /code \
         --bind "${POC_DIR}/data/media:${MEDIA_ROOT}" --bind "${POC_DIR}/data/static:${STATIC_ROOT}" \
         --bind "${POC_DIR}/data/postgres-socket:/var/run/postgresql" \
+        --bind "${SCINET_SESSIONS_DIR}:${SCINET_SESSIONS_DIR}" \
+        --bind "${SCINET_USERS_DIR}:${SCINET_USERS_DIR}" \
+        --bind "${SCINET_DATASETS_DIR}:${SCINET_DATASETS_DIR}" \
         --env SECRET_KEY="${SECRET_KEY}" --env DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE}" \
         --env DEBUG="${DEBUG}" --env ALLOWED_HOSTS="${ALLOWED_HOSTS}" --env SITE_ID="${SITE_ID}" \
         --env DB_HOST="/var/run/postgresql" --env DB_PORT="${DB_PORT}" --env DB_NAME="${DB_NAME}" \
@@ -128,6 +141,15 @@ start_app_bg() {
         --env GCP_MEDIA_BUCKET_NAME="${GCP_MEDIA_BUCKET_NAME}" --env GCP_STATIC_BUCKET_NAME="${GCP_STATIC_BUCKET_NAME}" \
         --env SITE_NAME="${SITE_NAME}" --env STRAPLINE="${STRAPLINE}" --env EMAIL_SIGNATURE="${EMAIL_SIGNATURE}" \
         --env FOOTER_MANAGED_BY="${FOOTER_MANAGED_BY}" --env FOOTER_SUPPORTED_BY="${FOOTER_SUPPORTED_BY}" \
+        --env ENABLE_LOCAL_RESEARCH_ENVIRONMENTS="${ENABLE_LOCAL_RESEARCH_ENVIRONMENTS}" \
+        --env SCINET_SLURM_ACCOUNT="${SCINET_SLURM_ACCOUNT}" \
+        --env SCINET_PARTITION="${SCINET_PARTITION}" \
+        --env SCINET_DEFAULT_WALLTIME="${SCINET_DEFAULT_WALLTIME}" \
+        --env SCINET_MAX_WALLTIME="${SCINET_MAX_WALLTIME}" \
+        --env SCINET_PROJECT_ROOT="${SCINET_PROJECT_ROOT}" \
+        --env SCINET_DATASETS_DIR="${SCINET_DATASETS_DIR}" \
+        --env SCINET_USERS_DIR="${SCINET_USERS_DIR}" \
+        --env SCINET_SESSIONS_DIR="${SCINET_SESSIONS_DIR}" \
         "${POC_DIR}/containers/health-data-nexus.sif" \
         bash -c "python physionet-django/manage.py migrate && python physionet-django/manage.py runserver 0.0.0.0:${APP_PORT}" \
         > "${POC_DIR}/logs/app.log" 2>&1 &
