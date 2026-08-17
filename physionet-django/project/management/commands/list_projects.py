@@ -114,7 +114,8 @@ class Command(BaseCommand):
                     date = project.creation_datetime.strftime('%Y-%m-%d')
                 else:
                     date = project.submission_datetime.strftime('%Y-%m-%d')
-                username = project.submitting_author().user.username
+                submitting_author = project.submitting_author()
+                username = submitting_author.user.username if submitting_author else '-'
                 title = project.title
 
                 if options['verbosity'] < 1:

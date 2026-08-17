@@ -254,7 +254,8 @@ class PublishedProject(Metadata, SubmissionInfo):
 
     def submitting_user(self):
         "User who is the submitting author"
-        return self.authors.get(is_submitting=True).user
+        author = self.authors.filter(is_submitting=True).first()
+        return author.user if author else None
 
     def can_publish_new(self, user):
         """

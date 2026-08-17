@@ -27,7 +27,7 @@
         {% for project in projects %}
           <tr>
             <td><a href="{% url 'project_preview' project.slug %}?Admin=True">{{ project.title }}</a></td>
-            <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</a></td>
+            <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
             <td>{{ project.creation_datetime|date }}</td>
           </tr>
         {% endfor %}

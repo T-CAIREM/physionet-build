@@ -73,6 +73,7 @@ from user.models import (
     CredentialApplication,
     CredentialReview,
     LegacyCredential,
+    Profile,
     User,
     Training,
     TrainingType,
@@ -2609,6 +2610,8 @@ def generate_user_csv_data(users):
     for user in users:
         credentials = user.credential_applications.filter(
             status=CredentialApplication.Status.ACCEPTED).order_by('decision_datetime').last()
+        # A user without a profile must not truncate the streamed file
+        profile = getattr(user, 'profile', None) or Profile()
 
         yield [user.id,
                user.username,
@@ -2618,12 +2621,12 @@ def generate_user_csv_data(users):
                user.is_active,
                user.email,
                ', '.join(user.get_emails()),
-               user.profile.first_names,
-               user.profile.last_name,
-               user.profile.get_full_name(),
-               user.profile.affiliation,
-               user.profile.location,
-               user.profile.website,
+               profile.first_names,
+               profile.last_name,
+               profile.get_full_name(),
+               profile.affiliation,
+               profile.location,
+               profile.website,
                user.get_orcid_id(),
                user.get_credentialing_status(),
                credentials.decision_datetime if credentials else None,

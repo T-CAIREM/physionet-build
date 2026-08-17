@@ -118,7 +118,8 @@ def project_auth(auth_mode=0, post_auth_mode=0):
             # Verify user's role in project
             authors = project.authors.all().order_by('display_order')
             is_author = not user.is_anonymous and bool(authors.filter(user=user))
-            is_submitting = (user == authors.get(is_submitting=True).user)
+            submitting_author = authors.filter(is_submitting=True).first()
+            is_submitting = bool(submitting_author) and user == submitting_author.user
 
             # Check if user is an active reviewer for this project
             is_reviewer = (
@@ -440,7 +441,7 @@ def project_overview(request, project_slug, **kwargs):
     return render(request, 'project/project_overview.html',
         {'project':project, 'is_submitting':is_submitting,
          'under_submission':under_submission,
-         'submitting_author':kwargs['authors'].get(is_submitting=True)})
+         'submitting_author':kwargs['authors'].filter(is_submitting=True).first()})
 
 
 @login_required
@@ -475,9 +476,10 @@ def remove_author(request, author_id, project, authors):
     if rm_author in authors:
         # Reset the corresponding author if necessary
         if rm_author.is_corresponding:
-            submitting_author = authors.get(is_submitting=True)
-            submitting_author.is_corresponding = True
-            submitting_author.save()
+            submitting_author = authors.filter(is_submitting=True).first()
+            if submitting_author:
+                submitting_author.is_corresponding = True
+                submitting_author.save()
         # Other author orders may have to be decreased when this author
         # is removed
         higher_authors = authors.filter(display_order__gt=rm_author.display_order)

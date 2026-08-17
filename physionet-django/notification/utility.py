@@ -98,10 +98,11 @@ def email_project_info(project):
     """
     Header for the email. e.g. Project ID, Project title, Submitting Author.
     """
+    submitting_author = project.submitting_author()
     header = ("Project title: {}\n"
         "Submission ID: {}\n"
         "Submitting author: {}"
-        ).format(project.title, project.slug, project.submitting_author())
+        ).format(project.title, project.slug, submitting_author or 'unknown')
 
     return header
 
@@ -236,6 +237,8 @@ def invitation_response_notify(invitation, affected_emails, responding_user=None
     subject = 'Authorship invitation {} for project: {}'.format(response,
                                                                 project.title)
     email, name = project.author_contact_info(only_submitting=True)
+    if email is None:
+        return
     email_context = {
         'name': name,
         'project': project,
@@ -255,14 +258,15 @@ def invitation_response_notify(invitation, affected_emails, responding_user=None
         send_mail(subject, body, settings.DEFAULT_FROM_EMAIL,
                   [email], fail_silently=False)
 
-    submitting_user = project.submitting_author().user
-    create_notification(
-        recipient=submitting_user,
-        notification_type=NotificationType.INVITATION_RESPONSE,
-        message='Authorship invitation {} for project: {}'.format(response, project.title),
-        url=reverse('project_authors', args=(project.slug,)),
-        actor=responding_user,
-    )
+    submitting_author = project.submitting_author()
+    if submitting_author:
+        create_notification(
+            recipient=submitting_author.user,
+            notification_type=NotificationType.INVITATION_RESPONSE,
+            message='Authorship invitation {} for project: {}'.format(response, project.title),
+            url=reverse('project_authors', args=(project.slug,)),
+            actor=responding_user,
+        )
 
 
 def submit_notify(project):
@@ -286,14 +290,14 @@ def submit_notify(project):
         send_mail(subject, body, settings.DEFAULT_FROM_EMAIL,
                   [email], fail_silently=False)
 
-    submitting_author = project.submitting_author().user
+    submitting_author = project.submitting_author()
     for author in project.authors.all():
         create_notification(
             recipient=author.user,
             notification_type=NotificationType.PROJECT_SUBMISSION,
             message='Project submitted: {}'.format(project.title),
             url=reverse('project_home'),
-            actor=submitting_author,
+            actor=submitting_author.user if submitting_author else None,
         )
 
     # notify editorial team
@@ -426,7 +430,7 @@ def edit_decision_notify(request, project, edit_log, reminder=False):
     # Prepend reminder to the subject if needed
     if reminder:
         subject = "Reminder - {}".format(subject)
-        author_list = [project.author_contact_info(only_submitting=True)]
+        author_list = [c for c in [project.author_contact_info(only_submitting=True)] if c[0]]
     else:
         author_list = project.author_contact_info()
 
@@ -640,6 +644,8 @@ def storage_response_notify(storage_request):
     subject = 'Storage request {0} for project: {1}'.format(response,
         project.title)
     email, name = project.author_contact_info(only_submitting=True)
+    if email is None:
+        return
     body = loader.render_to_string(
         'notification/email/storage_response_notify.html', {
             'name': name,
@@ -904,8 +910,14 @@ def training_application_request(request, training):
             'signature': settings.EMAIL_SIGNATURE,
             'footer': email_footer(), 'SITE_NAME': settings.SITE_NAME
         })
-    send_mail(subject, body, settings.DEFAULT_FROM_EMAIL,
-              [training.user.email], fail_silently=False)
+    try:
+        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL,
+                  [training.user.email], fail_silently=False)
+    except OSError:
+        # The training itself has already been saved. A mail server
+        # failure must not turn that into a failed user action.
+        logger.exception('Failed to send training application email to %s',
+                         training.user.email)
 
 
 def credential_application_request(request, application):
@@ -1070,7 +1082,8 @@ def notify_owner_data_access_review_withdrawal(reviewer_invitation):
     subject = f"{settings.SITE_NAME} Data Request Reviewer Withdrawal"
 
     project = reviewer_invitation.project
-    for user in set([project.submitting_author().user, project.corresponding_author().user]):
+    for user in {a.user for a in (project.submitting_author(),
+                                  project.corresponding_author()) if a}:
         body = loader.render_to_string(
             'notification/email/notify_owner_data_access_review_withdrawal.html', {
                 'owner': user,
@@ -1248,7 +1261,9 @@ def notify_submitting_author(request, project):
     """
     Notify a user that they have been made submitting author for a project.
     """
-    author = project.authors.get(is_submitting=True)
+    author = project.authors.filter(is_submitting=True).first()
+    if author is None:
+        return
     subject = f"{settings.SITE_NAME}: You are now a submitting author"
     context = {
         'name': author.get_full_name(),

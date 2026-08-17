@@ -59,7 +59,7 @@
                 {% for project in assignment_projects %}
                   <tr>
                     <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                    <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</a></td>
+                    <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                     <td>{{ project.submission_datetime|date }}</td>
                     <td>
                       <a href='#' data-toggle="modal" data-target="#assignModal" onclick="set_project_id('{{ project.id }}','{{ project|escapejs }}')" class="btn btn-primary btn-sm" role="button">Assign Editor</a>
@@ -124,7 +124,7 @@
               {% for project in reviewer_assignment_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</a></td>
+                  <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                   <td>{{ project.editor }}</td>
                   <td>{{ project.submission_datetime|date }}</td>
                   <td>
@@ -167,7 +167,7 @@
               {% for project in external_review_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</a></td>
+                  <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                   <td>{{ project.editor }}</td>
                   <td>{{ project.submission_datetime|date }}</td>
                   <td>{{ project.reviewer_invitations.all|length }} invited</td>
@@ -207,7 +207,7 @@
               {% for project in decision_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</a></td>
+                  <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                   <td>{{ project.editor }}</td>
                   <td>{{ project.submission_datetime|date }}</td>
                   <td>
@@ -254,7 +254,7 @@
               {% for project in revision_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</a></td>
+                  <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                   <td>{{ project.submission_datetime|date }}</td>
                   <td>{{ project.revision_request_datetime|date }}</td>
                   <td>{{ project.latest_reminder|date }}</td>
@@ -305,7 +305,7 @@
               {% for project in copyedit_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</td>
+                  <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                   <td>{{ project.submission_datetime|date }}</td>
                   <td>{{ project.editor_accept_datetime|date }}</td>
                   <td>{{ project.editor }}</td>
@@ -347,7 +347,7 @@
               {% for project in approval_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</td>
+                  <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                   <td>{{ project.submission_datetime|date }}</td>
                   <td>{{ project.editor_accept_datetime|date }}</td>
                   <td>{{ project.copyedit_completion_datetime|date }}</td>
@@ -394,7 +394,7 @@
               {% for project in publish_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author.user.username }}</a> - {{ project.submitting_author.user.email }}</td>
+                  <td>{% if project.submitting_author %}<a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author.user.username }}</a> - {{ project.submitting_author.user.email }}{% else %}<span class="text-muted">&mdash;</span>{% endif %}</td>
                   <td>{{ project.submission_datetime|date }}</td>
                   <td>{{ project.editor_accept_datetime|date }}</td>
                   <td>{{ project.copyedit_completion_datetime|date }}</td>
@@ -436,7 +436,7 @@
               {% for project in on_hold_projects %}
                 <tr>
                   <td><a href="{% url 'submission_info' project.slug %}">{{ project }}</a></td>
-                  <td><a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}</a></td>
+                  <td>{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}</td>
                   <td>{{ project.editor|default:"Unassigned" }}</td>
                   <td>{{ project.submission_status_label }}</td>
                   <td>{{ project.submission_datetime|date }}</td>
