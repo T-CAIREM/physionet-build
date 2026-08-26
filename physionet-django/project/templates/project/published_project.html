@@ -398,6 +398,14 @@
           href="{% url 'data_access_request_status' project.slug project.version %}">please reapply</a>.
       </div>
     {% endif %}
+
+    {# Extension point. An installed application may contribute an additional section to the
+       published project page; the included template is provided by that application, and the
+       flag comes from a context processor. Nothing is rendered, and no template is looked up,
+       when the feature is disabled, so this is a no-op for a default installation. #}
+    {% if dataset_apps_enabled %}
+      {% include "dataset_apps/published_project_tab.html" with project=project %}
+    {% endif %}
 </div>
 
 

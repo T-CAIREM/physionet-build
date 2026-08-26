@@ -1,9 +1,18 @@
+from datetime import timedelta
+
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
+from oauth2_provider.models import get_access_token_model, get_application_model
 from rest_framework.test import APIClient
 from rest_framework import status
 
 from project.models import PublishedProject, ProjectType, AccessPolicy
+from user.models import User
+
+Application = get_application_model()
+AccessToken = get_access_token_model()
 
 
 class TestRateLimiting(TestCase):
@@ -315,3 +324,58 @@ class TestAPIFieldSerialization(TestCase):
 
         for field in expected_existing_fields:
             self.assertIn(field, data, f"Field '{field}' missing from response")
+
+
+class TestOAuthTokenAuthentication(TestCase):
+    """Test that the metadata API accepts OAuth bearer tokens"""
+
+    def setUp(self):
+        """Set up an OAuth application, a token, and a clean throttle cache"""
+        cache.clear()
+        self.client = APIClient()
+
+        self.user = User.objects.create_user(
+            username='api_token_user',
+            email='api_token_user@example.org',
+            password='Tester11!',
+        )
+        self.application = Application.objects.create(
+            name='Metadata API Test Application',
+            redirect_uris='https://example.org/callback',
+            user=self.user,
+            client_type=Application.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=Application.GRANT_AUTHORIZATION_CODE,
+        )
+        self.access_token = AccessToken.objects.create(
+            user=self.user,
+            scope='profile:read',
+            expires=timezone.now() + timedelta(seconds=300),
+            token='metadata-api-test-token',
+            application=self.application,
+        )
+        self.auth_header = {'HTTP_AUTHORIZATION': 'Bearer {}'.format(self.access_token.token)}
+        self.url = reverse('published_project_detail',
+                           kwargs={'project_slug': 'demopsn', 'version': '1.0'})
+
+    def tearDown(self):
+        cache.clear()
+
+    def test_bearer_token_is_authenticated(self):
+        """A bearer token identifies the caller instead of being ignored"""
+        response = self.client.get(self.url, **self.auth_header)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.wsgi_request.user, self.user)
+
+    def test_bearer_token_is_not_anonymously_throttled(self):
+        """A bearer token gets the authenticated rate, not the 20/hour anonymous one"""
+        for _ in range(21):
+            response = self.client.get(self.url, **self.auth_header)
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_anonymous_requests_are_still_throttled(self):
+        """Anonymous behaviour is unchanged by accepting tokens"""
+        for _ in range(20):
+            self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_429_TOO_MANY_REQUESTS)

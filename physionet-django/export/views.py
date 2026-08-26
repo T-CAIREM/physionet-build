@@ -7,6 +7,7 @@ from rest_framework.authentication import SessionAuthentication, BasicAuthentica
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 from rest_framework.views import APIView
+from oauth2_provider.contrib.rest_framework import OAuth2Authentication
 
 from project.authorization.access import can_access_project
 from project.models import PublishedProject, ProjectType
@@ -46,12 +47,12 @@ class PublishedProjectList(mixins.ListModelMixin, generics.GenericAPIView):
         - Source URL (full URL to project page)
 
     Authentication:
-        - Session or Basic authentication required
+        - Session, Basic or OAuth2 bearer token authentication (all optional)
         - Rate limited: 100 requests/hour for authenticated users
         - Rate limited: 20 requests/hour for anonymous users
     """
     queryset = PublishedProject.objects.all().order_by('id').prefetch_related('topics')
-    authentication_classes = [SessionAuthentication, BasicAuthentication]
+    authentication_classes = [SessionAuthentication, BasicAuthentication, OAuth2Authentication]
     serializer_class = PublishedProjectSerializer
     throttle_classes = [StandardRateThrottle, StandardAnonRateThrottle]
 
@@ -108,11 +109,11 @@ class PublishedProjectDetail(mixins.RetrieveModelMixin, generics.GenericAPIView)
         - Source URL (full URL to project page)
 
     Authentication:
-        - Session or Basic authentication required
+        - Session, Basic or OAuth2 bearer token authentication (all optional)
         - Rate limited: 100 requests/hour for authenticated users
         - Rate limited: 20 requests/hour for anonymous users
     """
-    authentication_classes = [SessionAuthentication, BasicAuthentication]
+    authentication_classes = [SessionAuthentication, BasicAuthentication, OAuth2Authentication]
     throttle_classes = [StandardRateThrottle, StandardAnonRateThrottle]
 
     def get(self, request, project_slug, version, *args, **kwargs):

@@ -165,6 +165,7 @@ TEMPLATES = [
                 'physionet.context_processors.platform_config',
                 'sso.context_processors.sso_enabled',
                 'physionet.context_processors.cloud_research_environments_config',
+                'physionet.context_processors.dataset_apps_config',
                 'physionet.context_processors.homepage_config',
                 'physionet.context_processors.unread_notification_count'
             ],
@@ -743,6 +744,21 @@ if ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
     INSTALLED_APPS.append('environment.apps.EnvironmentConfig')
 
 
+# Dataset applications integration
+# See: https://pypi.org/project/hdn-dataset-apps/
+ENABLE_DATASET_APPS = config('ENABLE_DATASET_APPS', default=False, cast=bool)
+
+if ENABLE_DATASET_APPS:
+    # Parent domain the applications are served under, e.g. 'apps.example.org'. Applications
+    # are served from their own origin; it is never the portal's own host.
+    DATASET_APPS_DOMAIN = config('DATASET_APPS_DOMAIN', default='')
+    # Shared secret used to attest the end user's IP address to the decision endpoint, so
+    # that a server-to-server caller cannot have georestrictions evaluated against its own IP.
+    DATASET_APPS_CLIENT_IP_ATTESTATION_KEY = config('DATASET_APPS_CLIENT_IP_ATTESTATION_KEY', default='')
+    INSTALLED_APPS.append('dataset_apps.apps.DatasetAppsConfig')
+    TEMPLATES[0]['OPTIONS']['context_processors'].append('dataset_apps.context_processors.dataset_apps_config')
+
+
 SITE_NAME = config('SITE_NAME')
 STRAPLINE = config('STRAPLINE')
 SITE_HEADER_LOGO = config('SITE_HEADER_LOGO', default=None)
@@ -877,6 +893,7 @@ OAUTH2_PROVIDER = {
         "orcid:read": "Read access to user's ORCID iD",
         "public_id:read": "Read access to the user's persistent public ID",
         "data:download": "Download project data if token-holder is approved for access (training, DUA, etc).",
+        "dataset:read": "Read dataset access decisions and dataset content through the apps gateway",
         "annotations:collections:read": "Read access to annotation collections",
         "annotations:collections:write": "Create/Update/Delete annotation collections",
         "annotations:types:read": "Read access to annotation types",

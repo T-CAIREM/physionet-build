@@ -37,6 +37,19 @@ def cloud_research_environments_config(request):
     }
 
 
+def dataset_apps_config(request):
+    """
+    Exposes the dataset applications flag to templates. `dataset_apps_enabled` guards the
+    generic extension point in project/templates/project/published_project.html, so it is
+    defined here rather than in the installable package: the template hook must be safe to
+    render whether or not that package is installed.
+    """
+    return {
+        "ENABLE_DATASET_APPS": settings.ENABLE_DATASET_APPS,
+        "dataset_apps_enabled": settings.ENABLE_DATASET_APPS,
+    }
+
+
 def homepage_config(request):
     front_page_buttons = FrontPageButton.objects.all()
     return {

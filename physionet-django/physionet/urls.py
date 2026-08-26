@@ -96,6 +96,9 @@ if settings.ENABLE_SSO:
 if settings.ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
     urlpatterns.append(path('environments/', include('environment.urls')))
 
+if settings.ENABLE_DATASET_APPS:
+    urlpatterns.append(path('apps/', include('dataset_apps.urls')))
+
 if settings.DEBUG:
     import debug_toolbar
 
