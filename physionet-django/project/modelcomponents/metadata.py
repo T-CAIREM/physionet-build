@@ -100,8 +100,10 @@ class Metadata(models.Model):
         Get the names and emails of the project's authors.
         """
         if only_submitting:
-            user = self.authors.get(is_submitting=True).user
-            return user.email, user.get_full_name
+            author = self.authors.filter(is_submitting=True).first()
+            if author is None:
+                return None, None
+            return author.user.email, author.user.get_full_name
         else:
             authors = self.authors.all().order_by('display_order')
             users = [a.user for a in authors]
@@ -111,7 +113,7 @@ class Metadata(models.Model):
         return self.authors.get(is_corresponding=True)
 
     def submitting_author(self):
-        return self.authors.get(is_submitting=True)
+        return self.authors.filter(is_submitting=True).first()
 
     def author_list(self):
         """
@@ -137,9 +139,10 @@ class Metadata(models.Model):
         author_emails = ';'.join(a.user.email for a in authors)
 
         if separate_submitting:
-            submitting_author = authors.get(is_submitting=True)
+            submitting_author = authors.filter(is_submitting=True).first()
             coauthors = authors.filter(is_submitting=False)
-            submitting_author.set_display_info()
+            if submitting_author:
+                submitting_author.set_display_info()
             for a in coauthors:
                 a.set_display_info()
             if include_emails:

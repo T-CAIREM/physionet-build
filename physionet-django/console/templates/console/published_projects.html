@@ -40,7 +40,7 @@
             <td><a href="{% url 'published_project' project.slug project.version %}">{{ project.title }}</a></td>
             <td>{% if project.is_legacy %}Legacy{% else %}<a href="{% url 'published_submission_history' project.slug project.version %}">View History</a>{% endif %}</td>
             <td>{{ project.version }}</td>
-            <td>{% if project.is_legacy %}Legacy{% else %}<a href="{% url 'public_profile' project.submitting_author.user.username %}">{{ project.submitting_author }}{% endif %}</td>
+            <td>{% if project.is_legacy %}Legacy{% else %}{% include 'console/includes/submitting_author_link.html' with project=project url_name='public_profile' %}{% endif %}</td>
             <td>{{ project.editor }}</td>
             <td>{{ project.creation_datetime|date }}</td>
             <td>{{ project.publish_datetime|date }}</td>
