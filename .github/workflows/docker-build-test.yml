@@ -30,6 +30,14 @@ jobs:
   build:
     name: Build and Test
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 13-alpine stays the canonical/default version (other teams still run
+        # PG13); 17-alpine matches the HDN platform DBs (upgraded 2026-07-27).
+        postgres_tag: ['13-alpine', '17-alpine']
+    env:
+      POSTGRES_TEST_TAG: ${{ matrix.postgres_tag }}
     steps:
       - name: Checkout physionet-build repo
         uses: actions/checkout@v4
@@ -50,12 +58,14 @@ jobs:
       - name: Stop and remove containers
         run: docker compose -f docker/docker-compose.test.yml down
 
+      # Only the canonical (13-alpine) leg feeds publish: keeps the uploaded
+      # artifact name unique and ships the image tested on the default version.
       - name: Save physionet image
-        if: github.ref == 'refs/heads/dev' || github.event.inputs.publish_tag
+        if: (github.ref == 'refs/heads/dev' || github.event.inputs.publish_tag) && matrix.postgres_tag == '13-alpine'
         run: docker save physionet:latest | gzip > /tmp/physionet.tar.gz
 
       - name: Upload physionet image
-        if: github.ref == 'refs/heads/dev' || github.event.inputs.publish_tag
+        if: (github.ref == 'refs/heads/dev' || github.event.inputs.publish_tag) && matrix.postgres_tag == '13-alpine'
         uses: actions/upload-artifact@v4
         with:
           name: physionet
