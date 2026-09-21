@@ -17,7 +17,7 @@ services:
     env_file: ../.env.example
     entrypoint: ./docker/test-entrypoint.sh
   db:
-    image: postgres:13-alpine
+    image: postgres:${POSTGRES_TEST_TAG:-13-alpine}
     environment:
       POSTGRES_USER: physionet
       POSTGRES_PASSWORD: password
