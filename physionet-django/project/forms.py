@@ -8,6 +8,7 @@ from django.conf import settings
 from django.contrib.contenttypes.forms import BaseGenericInlineFormSet
 from django.contrib.contenttypes.models import ContentType
 from django.core.files.base import ContentFile
+from django.db import transaction
 from django.db.models.functions import Lower
 from django.forms.utils import ErrorList
 from django.forms.widgets import HiddenInput
@@ -95,9 +96,10 @@ class TransferAuthorForm(forms.Form):
         new_author = self.cleaned_data['transfer_author']
 
         # Assign the new submitting author
-        self.project.authors.update(is_submitting=False)
-        new_author.is_submitting = True
-        new_author.save()
+        with transaction.atomic():
+            self.project.authors.update(is_submitting=False)
+            new_author.is_submitting = True
+            new_author.save()
 
 
 class ActiveProjectFilesForm(forms.Form):

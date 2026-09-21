@@ -1,0 +1,1 @@
+{% if project.submitting_author %}<a href="{% url url_name project.submitting_author.user.username %}">{{ project.submitting_author }}</a>{% else %}<span class="text-muted">&mdash;</span>{% endif %}

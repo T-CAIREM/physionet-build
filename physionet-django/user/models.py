@@ -306,9 +306,9 @@ class UserManager(BaseUserManager):
                           username=self.model.normalize_username(username.lower()),
                           is_active=is_active, is_admin=is_admin)
         user.set_password(password)
-        user.save(using=self._db)
-
-        Profile.objects.create(user=user, first_names=first_names, last_name=last_name)
+        with transaction.atomic(using=self._db):
+            user.save(using=self._db)
+            Profile.objects.create(user=user, first_names=first_names, last_name=last_name)
         return user
 
     def create_superuser(self, email, password, username):
@@ -429,7 +429,15 @@ class User(AbstractBaseUser, PermissionsMixin):
         """
         Get the primary associated email
         """
-        return self.associated_emails.get(is_primary_email=True)
+        try:
+            return self.associated_emails.get(is_primary_email=True)
+        except ObjectDoesNotExist:
+            # Broken invariant (no primary flag set): fall back to the
+            # address on the user record instead of raising at every
+            # call site.
+            logger.error('User %s has no primary associated email',
+                         self.username)
+            return self.associated_emails.filter(email=self.email).first()
 
     def get_names(self):
         return self.profile.get_names()
@@ -572,6 +580,13 @@ class AssociatedEmail(models.Model):
 
     class Meta:
         default_permissions = ()
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=Q(is_primary_email=True),
+                name='unique_primary_email_per_user',
+            ),
+        ]
 
     def __str__(self):
         return self.email
@@ -615,12 +630,15 @@ def update_associated_emails(sender, **kwargs):
     """
     user = kwargs['instance']
     if not kwargs['created'] and kwargs['update_fields'] and 'email' in kwargs['update_fields']:
-        old_primary_email = AssociatedEmail.objects.get(user=user, is_primary_email=True)
-        new_primary_email = AssociatedEmail.objects.get(user=user, email=user.email)
-        old_primary_email.is_primary_email = False
-        new_primary_email.is_primary_email = True
-        old_primary_email.save()
-        new_primary_email.save()
+        new_primary_email = AssociatedEmail.objects.filter(user=user, email=user.email)
+        if new_primary_email.exists():
+            with transaction.atomic():
+                # Demote before promoting, so that at most one primary
+                # email exists at any point in the swap.
+                AssociatedEmail.objects.filter(
+                    user=user, is_primary_email=True).exclude(
+                    email=user.email).update(is_primary_email=False)
+                new_primary_email.update(is_primary_email=True)
 
 
 def photo_path(instance, filename):

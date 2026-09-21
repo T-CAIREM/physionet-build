@@ -28,7 +28,7 @@ from project.models import (
     StorageRequest,
     SubmissionStatus,
 )
-from user.models import User
+from user.models import Profile, User
 from physionet.models import FrontPageButton, StaticPage
 from user.test_views import TestMixin, prevent_request_warnings
 
@@ -1911,3 +1911,56 @@ class TestExternalReview(TestMixin):
         # Status should remain unchanged
         self.assertEqual(project.submission_status,
                          SubmissionStatus.NEEDS_REVIEWER_ASSIGNMENT)
+
+
+class TestMissingProfile(TestMixin):
+    """
+    A user without a profile must not corrupt the streamed user export.
+    """
+
+    ADMIN_USER = 'admin'
+    ADMIN_PASSWORD = 'Tester11!'
+
+    def test_download_users(self):
+        """Every user is still written out when one has no profile."""
+        expected = User.objects.count()
+        Profile.objects.filter(
+            user=User.objects.exclude(username=self.ADMIN_USER).first()).delete()
+
+        self.client.login(username=self.ADMIN_USER, password=self.ADMIN_PASSWORD)
+        response = self.client.get(reverse('download_users'))
+        content = b''.join(response.streaming_content).decode()
+
+        # One header row plus one row per user
+        self.assertEqual(len(content.strip().splitlines()), expected + 1)
+
+
+class TestMissingSubmittingAuthor(TestMixin):
+    """
+    Console listings must not fail when a project has no submitting author.
+    """
+
+    ADMIN_USER = 'admin'
+    ADMIN_PASSWORD = 'Tester11!'
+
+    def test_unsubmitted_projects(self):
+        """The listing renders even with no submitting author."""
+        project = ActiveProject.objects.filter(
+            submission_status=SubmissionStatus.UNSUBMITTED).first()
+        project.authors.update(is_submitting=False)
+
+        self.client.login(username=self.ADMIN_USER, password=self.ADMIN_PASSWORD)
+        response = self.client.get(reverse('unsubmitted_projects'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_project_page_for_author(self):
+        """Project pages remain reachable when the submitting author is gone."""
+        project = ActiveProject.objects.filter(
+            submission_status=SubmissionStatus.UNSUBMITTED).first()
+        author = project.authors.first()
+        project.authors.update(is_submitting=False)
+
+        self.client.login(username=author.user.username, password='Tester11!')
+        response = self.client.get(
+            reverse('project_overview', args=(project.slug,)))
+        self.assertEqual(response.status_code, 200)

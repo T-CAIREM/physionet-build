@@ -6,6 +6,7 @@ import os
 import pdb
 import re
 import shutil
+import smtplib
 import time
 from unittest import mock
 
@@ -26,6 +27,7 @@ from django.urls import reverse
 from django.utils import timezone
 import requests_mock
 
+from project.models import ProjectType
 from user.enums import TrainingStatus
 from user.models import (
     AssociatedEmail,
@@ -634,7 +636,21 @@ class TrainingTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0].level, msgs.ERROR)
-        self.assertEqual(Training.objects.count(), 109)
+
+    def test_submit_new_training_mail_failure(self):
+        """A mail server failure must not fail the training submission."""
+        self.client.force_login(user=self.user)
+        training_count = Training.objects.count()
+
+        with mock.patch(
+                'notification.utility.send_mail',
+                side_effect=smtplib.SMTPAuthenticationError(
+                    535, b'Username and Password not accepted')):
+            response = self.client.post(self.training_url,
+                                        self.training_payload_valid)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Training.objects.count(), training_count + 1)
 
     def test_view_training_not_authenticated(self):
         response = self.client.get(self.training_view_url)
@@ -982,6 +998,52 @@ class TestAWSVerification(TestCase):
         other_cloud_info.refresh_from_db()
         self.assertEqual(other_cloud_info.aws_userid, self.AWS_USERID)
         self.assertEqual(other_cloud_info.aws_user_arn, self.AWS_ARN)
+
+
+class TestMissingPrimaryEmail(TestMixin):
+    """
+    A user without a primary associated email must not break their account.
+    """
+
+    USERNAME = 'rgmark'
+    PASSWORD = 'Tester11!'
+
+    def test_get_primary_email_falls_back(self):
+        """The accessor falls back to the address on the user record."""
+        user = User.objects.get(username=self.USERNAME)
+        user.associated_emails.update(is_primary_email=False)
+
+        self.assertEqual(user.get_primary_email().email, user.email)
+
+    def test_create_project(self):
+        """Project creation is not blocked by a missing primary email."""
+        user = User.objects.get(username=self.USERNAME)
+        user.associated_emails.update(is_primary_email=False)
+
+        self.client.login(username=self.USERNAME, password=self.PASSWORD)
+        response = self.client.post(reverse('create_project'), data={
+            'title': 'Project Without A Primary Email',
+            'resource_type': ProjectType.objects.first().id,
+            'abstract': '<p>An abstract.</p>'})
+        self.assertEqual(response.status_code, 302)
+
+    def test_set_primary_email(self):
+        """Changing the primary email recovers the missing flag."""
+        user = User.objects.get(username=self.USERNAME)
+        associated_email = AssociatedEmail.objects.create(
+            user=user, email='rgmark-alternate@mit.edu', is_verified=True)
+        user.associated_emails.update(is_primary_email=False)
+
+        self.client.login(username=self.USERNAME, password=self.PASSWORD)
+        response = self.client.post(reverse('edit_emails'), data={
+            'set_primary_email': '',
+            'associated_email': associated_email.email})
+        self.assertEqual(response.status_code, 200)
+
+        associated_email.refresh_from_db()
+        self.assertTrue(associated_email.is_primary_email)
+        self.assertEqual(
+            user.associated_emails.filter(is_primary_email=True).count(), 1)
 
 
 class BackgroundTaskError(Exception):

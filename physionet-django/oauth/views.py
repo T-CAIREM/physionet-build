@@ -11,7 +11,7 @@ SCOPES_MAPPING = {
         "full_name": user.get_full_name(),
     },
     "email:read": lambda user: {
-        "email": user.get_primary_email().email if user.get_primary_email() else None,
+        "email": getattr(user.get_primary_email(), 'email', None),
     },
     "institution:read": lambda user: {
         "affiliation": user.profile.affiliation,
