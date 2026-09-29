@@ -745,6 +745,14 @@ if ENABLE_CLOUD_RESEARCH_ENVIRONMENTS:
     CLOUD_RESEARCH_ENVIRONMENTS_API_URL = config('CLOUD_RESEARCH_ENVIRONMENTS_API_URL')
     # Client-side poll interval (ms) for live status updates on the research environments page.
     RESEARCH_ENVIRONMENTS_POLL_INTERVAL_MS = config('RESEARCH_ENVIRONMENTS_POLL_INTERVAL_MS', default=30000, cast=int)
+    # Let researchers attach their own draft projects (read-write mount) to new workbenches.
+    CLOUD_RESEARCH_ENVIRONMENTS_ENABLE_DRAFT_WORKBENCHES = config(
+        'CLOUD_RESEARCH_ENVIRONMENTS_ENABLE_DRAFT_WORKBENCHES', default=False, cast=bool
+    )
+    # Expired-access workbench tasks: "off", "dry_run" (log only) or "enforce".
+    CLOUD_RESEARCH_ENVIRONMENTS_EXPIRED_ACCESS_ENFORCEMENT = config(
+        'CLOUD_RESEARCH_ENVIRONMENTS_EXPIRED_ACCESS_ENFORCEMENT', default='dry_run'
+    )
     INSTALLED_APPS.append('environment.apps.EnvironmentConfig')
 
 
